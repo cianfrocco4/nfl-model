@@ -11,12 +11,16 @@ positive value means the close moved in the direction of the bet.
 from __future__ import annotations
 
 import csv
+import math
 from dataclasses import dataclass
+from datetime import date, timedelta
 from pathlib import Path
 
 from nfl_model.odds_math import american_to_decimal
 
 QUALIFY_MIN_BETS = 100
+# A full NFL week is 16 games. Bye weeks are smaller, so this is an upper bound.
+GAMES_PER_FULL_WEEK = 16
 RECORDS = ("sides", "totals", "props", "live", "parlays")
 DIRECTIONS = ("over", "under", "spread", "decimal")
 
@@ -237,25 +241,116 @@ def season_stop_note(money: SeasonMoney, bankroll: float | None, fraction: float
     )
 
 
-def season_progress(money: SeasonMoney, bankroll: float | None, fraction: float) -> str:
-    """One line for the rest of this season through the postseason."""
+@dataclass(frozen=True)
+class ProfitGoal:
+    """A dollar target and a deadline. It is a progress check, not a stake size."""
+
+    return_fraction: float
+    weeks: float
+    start: date
+
+    @property
+    def deadline(self) -> date:
+        return self.start + timedelta(days=self.weeks * 7)
+
+
+def make_profit_goal(
+    return_fraction: float | None,
+    weeks: float | None,
+    start: date | None,
+) -> ProfitGoal | None:
+    if return_fraction is None or weeks is None or start is None:
+        return None
+    return ProfitGoal(return_fraction, weeks, start)
+
+
+def season_progress(
+    money: SeasonMoney,
+    bankroll: float | None,
+    fraction: float,
+    goal: ProfitGoal | None = None,
+    today: date | None = None,
+    flat_stake: float | None = None,
+    min_edge: float = 0.02,
+) -> str:
+    """Season stop, plus the profit goal when one is set."""
     if bankroll is None:
-        return "Season goal: set a bankroll so the loss stop can be measured."
+        text = "Season goal: set a bankroll so the loss stop can be measured."
+        if goal is not None:
+            text += " The profit goal uses that same bankroll."
+        return text
     limit = bankroll * fraction
     if not money.tracks_money:
-        return (
+        text = (
             f"Season through the postseason: keep every bet in the ledger, "
             f"and do not lose more than ${limit:,.2f}. "
             "Add stake, american, and result to ledger.csv so that stop can be checked."
         )
-    note = season_stop_note(money, bankroll, fraction)
-    if note is not None:
-        return note
-    return (
-        f"Season through the postseason: settled profit ${money.profit:,.2f} "
-        f"on {money.settled} bets ({money.unsettled} still open). "
-        f"Stop at -${limit:,.2f}."
-    )
+    else:
+        note = season_stop_note(money, bankroll, fraction)
+        if note is not None:
+            text = note
+        else:
+            text = (
+                f"Season through the postseason: settled profit ${money.profit:,.2f} "
+                f"on {money.settled} bets ({money.unsettled} still open). "
+                f"Stop at -${limit:,.2f}."
+            )
+    if goal is None:
+        return text
+    clock = today or date.today()
+    return text + "\n" + _goal_lines(money, bankroll, goal, clock, flat_stake, min_edge)
+
+
+def _goal_lines(
+    money: SeasonMoney,
+    bankroll: float,
+    goal: ProfitGoal,
+    today: date,
+    flat_stake: float | None,
+    min_edge: float,
+) -> str:
+    deadline = goal.deadline
+    target = bankroll * goal.return_fraction
+    if today < goal.start:
+        status = f"The window starts {goal.start:%b %d}."
+    elif today > deadline:
+        if money.profit >= target:
+            status = f"The window closed on {deadline:%b %d} after settled profit reached ${target:,.2f}."
+        else:
+            status = (
+                f"The window closed on {deadline:%b %d}. "
+                f"Settled profit is ${money.profit:,.2f} against ${target:,.2f}."
+            )
+    elif money.profit >= target:
+        days_left = max((deadline - today).days, 0)
+        status = (
+            f"Settled profit ${money.profit:,.2f} has reached ${target:,.2f}. "
+            f"{days_left} days left in the window."
+        )
+    else:
+        share = money.profit / target if target else 0.0
+        days_left = max((deadline - today).days, 0)
+        status = f"Settled profit ${money.profit:,.2f} is {share:.0%} of ${target:,.2f}. {days_left} days left."
+    lines = [f"Goal: +{goal.return_fraction:.0%} (${target:,.2f}) by {deadline:%b %d}. {status}"]
+    if flat_stake is not None and flat_stake > 0 and min_edge > 0 and target > 0:
+        expected = min_edge * flat_stake
+        needed = math.ceil(target / expected)
+        capacity = int(goal.weeks * GAMES_PER_FULL_WEEK)
+        reach = (
+            f"At a flat stake of ${flat_stake:,.2f} and an edge of {min_edge:.1%}, "
+            f"one bet expects at most ${expected:,.2f}. "
+            f"Reaching ${target:,.2f} takes at least {needed} bets at that edge, before vig."
+        )
+        if needed > capacity:
+            reach += (
+                f" A {goal.weeks:g}-week slate is at most {capacity} games. "
+                "The stake stays on the locked rule."
+            )
+        else:
+            reach += " The stake stays on the locked rule."
+        lines.append(reach)
+    return "\n".join(lines)
 
 
 def _parse_american(path: Path, line_number: int, raw: str) -> int:

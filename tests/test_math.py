@@ -1,7 +1,7 @@
 """Core prices, staking, qualification, and parlay joints."""
 
 import math
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 from nfl_model.odds_math import (
@@ -30,10 +30,12 @@ from nfl_model.qualification import (
     closing_line_value,
     grade_record,
     qualification_report,
+    make_profit_goal,
     season_money,
+    season_progress,
 )
 from nfl_model.recommend import apply_season_loss_limit, decide, render, slate_end
-from nfl_model.settings import Settings, StakingMethod
+from nfl_model.settings import Settings, SettingsError, StakingMethod
 from nfl_model.staking import kelly_fraction, method_for_policy, stake_dollars
 
 
@@ -289,6 +291,53 @@ def test_season_loss_limit_zeros_a_stake():
     still_open = SeasonMoney(1, 0, -24.0, 0, 1, 0, True)
     kept = apply_season_loss_limit([both], settings, still_open)
     assert kept[0].stake == both.stake
+
+
+def test_profit_goal_is_a_progress_check_and_leaves_the_stake():
+    start = date(2026, 9, 27)
+    plain = Settings(bankroll=1000)
+    aimed = Settings(bankroll=1000, goal_return=0.20, goal_weeks=3, goal_start=start)
+    kwargs = dict(
+        game="A at B", market="spreads", side="Home -3.5", record="sides",
+        dk_american=-110, dk_novig=0.5, p_win=0.58, p_push=0.0,
+        market_probability=0.56, market_source="pinnacle", note="", qualified=False,
+    )
+    assert decide(**kwargs, settings=aimed).stake == decide(**kwargs, settings=plain).stake
+    goal = make_profit_goal(aimed.goal_return, aimed.goal_weeks, aimed.goal_start)
+    money = SeasonMoney(0, 0, 0.0, 0, 0, 0, True)
+    text = season_progress(
+        money, 1000, 0.25,
+        goal=goal,
+        today=start,
+        flat_stake=6.50,
+        min_edge=0.02,
+    )
+    assert "Goal: +20% ($200.00) by Oct 18." in text
+    assert "at least 1539 bets" in text
+    assert "at most 48 games" in text
+    assert "The stake stays on the locked rule." in text
+    reached = season_progress(
+        SeasonMoney(4, 0, 200.0, 4, 0, 0, True), 1000, 0.25,
+        goal=goal,
+        today=date(2026, 10, 1),
+        flat_stake=6.50,
+    )
+    assert "has reached $200.00" in reached
+
+
+def test_profit_goal_requires_return_weeks_and_start():
+    try:
+        Settings(bankroll=1000, goal_return=0.20)
+    except SettingsError as exc:
+        assert "--goal-return" in str(exc)
+    else:
+        raise AssertionError("expected a settings error")
+    try:
+        Settings(bankroll=1000, goal_return=1.5, goal_weeks=3, goal_start=date(2026, 9, 27))
+    except SettingsError as exc:
+        assert "0.20" in str(exc)
+    else:
+        raise AssertionError("expected a settings error")
 
 
 def test_one_leg_is_not_a_parlay():

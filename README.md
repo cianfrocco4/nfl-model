@@ -103,6 +103,16 @@ Through the rest of the 2026 season and the postseason, on the bankroll you pass
 - Treat average closing-line value above 0 as the skill check. Quarter Kelly still waits for 100 graded bets and that positive average.
 - Stop. Once settled losses reach 25% of that bankroll, `board`, `props`, `live`, and `parlays` suggest no new stakes. On $100 the stop is $25. `NFL_LOSS_LIMIT_FRACTION` changes the share.
 
+A profit goal is a separate progress check. It is a dollar target and a deadline, for example 20% of the bankroll in 3 weeks:
+
+```bash
+python -m nfl_model qualification --bankroll 1000 --goal-return 0.20 --goal-weeks 3 --goal-start 2026-09-27
+```
+
+`qualification`, `board`, `props`, `live`, and `parlays` then show settled profit against that target and the days left. Hitting the target, or missing the date, leaves the stake on the locked rule. The loss stop is unchanged.
+
+On a $1,000 bankroll the sides stake is $6.50. An edge of 2 percentage points is at most $0.13 of expected profit on that bet, and the DraftKings vig takes part of it. $200 is at least about 1,500 such bets. Three weeks is at most 48 games. The goal reports that gap. It is not a promise, and it is not a reason to bet more.
+
 The model does not raise stakes to chase a dollar profit. A real edge of about 2 percentage points, bet flat at $0.65, is about a dollar of expected profit across the rest of this season. A cold run can still lose more than that before the stop. Archive `ledger.csv` and start a new file when you want the next season's stop to begin at $0.
 
 ## Environment
@@ -123,6 +133,9 @@ The model does not raise stakes to chase a dollar profit. A real edge of about 2
 | `NFL_SLEEVE_LIVE` | `0.10` | |
 | `NFL_SLEEVE_PARLAYS` | `0.05` | |
 | `NFL_LOSS_LIMIT_FRACTION` | `0.25` | Stop new stakes after settled losses reach this share of the bankroll |
+| `NFL_GOAL_RETURN` | unset | Profit goal as a fraction of the bankroll. 20% is `0.20` |
+| `NFL_GOAL_WEEKS` | unset | Weeks allowed to reach `NFL_GOAL_RETURN` |
+| `NFL_GOAL_START` | unset | First day of that window, `YYYY-MM-DD`. Set all three goal variables together |
 | `NFL_UNIT_SIZE` | 1% of the sleeve | Used only with `--staking units` |
 
 ## Model

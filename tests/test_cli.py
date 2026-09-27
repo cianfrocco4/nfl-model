@@ -13,6 +13,33 @@ def test_board_without_api_key(monkeypatch, capsys):
     assert "https://the-odds-api.com" in error
 
 
+def test_qualification_reports_a_profit_goal(tmp_path: Path, capsys):
+    ledger = tmp_path / "ledger.csv"
+    ledger.write_text(
+        "record,bet_number,close_number,direction,note,stake,american,result\n"
+    )
+    code = main(
+        [
+            "qualification",
+            "--bankroll",
+            "1000",
+            "--ledger",
+            str(ledger),
+            "--goal-return",
+            "0.20",
+            "--goal-weeks",
+            "3",
+            "--goal-start",
+            "2026-09-27",
+        ]
+    )
+    assert code == 0
+    output = capsys.readouterr().out
+    assert "profit goal: +20% of the bankroll within 3 weeks from 2026-09-27" in output
+    assert "Goal: +20% ($200.00) by Oct 18." in output
+    assert "The stake stays on the locked rule." in output
+
+
 def test_qualification_reports_the_season_stop(tmp_path: Path, capsys):
     ledger = tmp_path / "ledger.csv"
     ledger.write_text(

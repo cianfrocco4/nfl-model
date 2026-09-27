@@ -9,6 +9,7 @@ from __future__ import annotations
 import enum
 import os
 from dataclasses import dataclass
+from datetime import date
 
 
 class FairPriceSource(enum.Enum):
@@ -75,6 +76,9 @@ class Settings:
     sleeve_live: float = DEFAULT_SLEEVE_LIVE
     sleeve_parlays: float = DEFAULT_SLEEVE_PARLAYS
     loss_limit_fraction: float = DEFAULT_LOSS_LIMIT_FRACTION
+    goal_return: float | None = None
+    goal_weeks: float | None = None
+    goal_start: date | None = None
 
     def __post_init__(self) -> None:
         if self.bankroll is not None and self.bankroll <= 0:
@@ -100,6 +104,16 @@ class Settings:
             raise SettingsError("Sleeve fractions cannot be negative")
         if not 0 < self.loss_limit_fraction <= 1:
             raise SettingsError("--loss-limit-fraction must be between 0 and 1 (25% is 0.25)")
+        goal_parts = (self.goal_return is not None, self.goal_weeks is not None, self.goal_start is not None)
+        if any(goal_parts) and not all(goal_parts):
+            raise SettingsError(
+                "A profit goal needs --goal-return, --goal-weeks, and --goal-start together. "
+                "20% in 3 weeks is --goal-return 0.20 --goal-weeks 3 --goal-start YYYY-MM-DD."
+            )
+        if self.goal_return is not None and not 0 < self.goal_return <= 1:
+            raise SettingsError("--goal-return must be between 0 and 1 (20% is 0.20)")
+        if self.goal_weeks is not None and not 0 < self.goal_weeks <= 30:
+            raise SettingsError("--goal-weeks must be between 0 and 30")
 
     def pool(self, family: str) -> float:
         """Dollars this family is allowed to draw from."""
@@ -131,20 +145,36 @@ class Settings:
                 f"live ${self.pool('live'):,.2f} ({self.sleeve_live:.0%}), "
                 f"parlays ${self.pool('parlays'):,.2f} ({self.sleeve_parlays:.0%})"
             )
-        return "\n".join(
+        lines = [
+            "Defaults locked 2026-09-26.",
+            f"  fair price: {self.fair_price.value} (stake only when model and market are both +EV; a single signal is a lean)",
+            f"  staking: {staking}",
+            "  parlays: 2 or 3 legs, flat 1% of the parlay sleeve, no quarter-Kelly upgrade",
+            f"  bankroll: {bank}",
+            f"  edge threshold: {self.min_edge:.1%}   minimum EV: {self.min_ev:.1%} (settings, not a fixed cutoff)",
+            f"  stake cap: {self.max_stake_fraction:.1%} of the sleeve the bet draws from",
+            f"  season stop: no new stakes after settled losses reach {self.loss_limit_fraction:.0%} of the bankroll",
+        ]
+        goal_line = _goal_phrase(self)
+        if goal_line:
+            lines.append(goal_line)
+        lines.extend(
             [
-                "Defaults locked 2026-09-26.",
-                f"  fair price: {self.fair_price.value} (stake only when model and market are both +EV; a single signal is a lean)",
-                f"  staking: {staking}",
-                "  parlays: 2 or 3 legs, flat 1% of the parlay sleeve, no quarter-Kelly upgrade",
-                f"  bankroll: {bank}",
-                f"  edge threshold: {self.min_edge:.1%}   minimum EV: {self.min_ev:.1%} (settings, not a fixed cutoff)",
-                f"  stake cap: {self.max_stake_fraction:.1%} of the sleeve the bet draws from",
-                f"  season stop: no new stakes after settled losses reach {self.loss_limit_fraction:.0%} of the bankroll",
                 "Spreads and moneylines share a closing-line record. Totals keep their own. Props keep their own.",
                 "Live stays flat. Other straight staking methods: --staking flat|units|full|half|quarter.",
             ]
         )
+        return "\n".join(lines)
+
+
+def _goal_phrase(settings: Settings) -> str:
+    if settings.goal_return is None or settings.goal_weeks is None or settings.goal_start is None:
+        return ""
+    weeks = f"{settings.goal_weeks:g}"
+    return (
+        f"  profit goal: +{settings.goal_return:.0%} of the bankroll within {weeks} weeks "
+        f"from {settings.goal_start.isoformat()}. The stake size stays on the locked rule."
+    )
 
 
 def _staking_phrase(settings: Settings) -> str:
@@ -185,6 +215,22 @@ def _env_str(name: str) -> str | None:
     return raw.strip().lower()
 
 
+def _parse_date(raw: str | None, label: str) -> date | None:
+    if raw is None or raw.strip() == "":
+        return None
+    try:
+        return date.fromisoformat(raw.strip())
+    except ValueError as exc:
+        raise SettingsError(f"{label} must be a date YYYY-MM-DD, got {raw!r}") from exc
+
+
+def _env_date(name: str) -> date | None:
+    raw = os.environ.get(name)
+    if raw is None or raw.strip() == "":
+        return None
+    return _parse_date(raw, name)
+
+
 def _env_float(name: str) -> float | None:
     raw = os.environ.get(name)
     if raw is None or raw.strip() == "":
@@ -221,6 +267,9 @@ def load_settings(
     sleeve_live: float | None = None,
     sleeve_parlays: float | None = None,
     loss_limit_fraction: float | None = None,
+    goal_return: float | None = None,
+    goal_weeks: float | None = None,
+    goal_start: str | None = None,
     bankroll_fallback: float | None = None,
 ) -> Settings:
     """CLI values win, then environment variables, then the locked defaults."""
@@ -229,6 +278,11 @@ def load_settings(
         resolved_bankroll = _env_float("NFL_BANKROLL")
     if resolved_bankroll is None:
         resolved_bankroll = bankroll_fallback
+    resolved_goal_return = goal_return if goal_return is not None else _env_float("NFL_GOAL_RETURN")
+    resolved_goal_weeks = goal_weeks if goal_weeks is not None else _env_float("NFL_GOAL_WEEKS")
+    resolved_goal_start = _parse_date(goal_start, "--goal-start")
+    if resolved_goal_start is None:
+        resolved_goal_start = _env_date("NFL_GOAL_START")
     return Settings(
         fair_price=_enum_value(FairPriceSource, fair_price, "--fair-price")
         or _enum_value(FairPriceSource, _env_str("NFL_FAIR_PRICE"), "NFL_FAIR_PRICE")
@@ -274,4 +328,7 @@ def load_settings(
             if _env_float("NFL_LOSS_LIMIT_FRACTION") is not None
             else DEFAULT_LOSS_LIMIT_FRACTION
         ),
+        goal_return=resolved_goal_return,
+        goal_weeks=resolved_goal_weeks,
+        goal_start=resolved_goal_start,
     )

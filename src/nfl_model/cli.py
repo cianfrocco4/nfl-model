@@ -38,8 +38,15 @@ from nfl_model.parlay import (
 )
 from nfl_model.probabilities import total_outcomes
 from nfl_model.props_model import MARKET_FOR_STAT, build_prop_state, normalize_name, project_stat
-from nfl_model.qualification import qualification_report, season_money, season_progress, season_stop_note
+from nfl_model.qualification import (
+    make_profit_goal,
+    qualification_report,
+    season_money,
+    season_progress,
+    season_stop_note,
+)
 from nfl_model.recommend import (
+    EASTERN,
     EASTERN,
     apply_season_loss_limit,
     live_board,
@@ -92,6 +99,23 @@ def _parser() -> argparse.ArgumentParser:
         default=None,
         help="Stop new stakes after settled losses reach this share of the bankroll. Default is 0.25.",
     )
+    common.add_argument(
+        "--goal-return",
+        type=float,
+        default=None,
+        help="Profit goal as a fraction of the bankroll. 20%% is 0.20. Does not change the stake.",
+    )
+    common.add_argument(
+        "--goal-weeks",
+        type=float,
+        default=None,
+        help="Weeks allowed to reach --goal-return.",
+    )
+    common.add_argument(
+        "--goal-start",
+        default=None,
+        help="First day of the profit-goal window, YYYY-MM-DD.",
+    )
     common.add_argument("--ledger", type=Path, default=None)
     common.add_argument("--refresh", action="store_true")
     common.add_argument("--verbose", action="store_true", help="Show leans, passes, and every priced side.")
@@ -130,7 +154,11 @@ def _parser() -> argparse.ArgumentParser:
     parlays.add_argument("--no-props", action="store_true", help="Use game markets only.")
     parlays.set_defaults(func=_parlays)
 
-    qualification = sub.add_parser("qualification", parents=[common], help="Show which records have earned quarter Kelly.")
+    qualification = sub.add_parser(
+        "qualification",
+        parents=[common],
+        help="Show quarter-Kelly qualification, the season stop, and any profit goal.",
+    )
     qualification.set_defaults(func=_qualification)
     return parser
 
@@ -151,6 +179,9 @@ def _settings(args, *, fallback: float | None = None) -> Settings:
         sleeve_live=args.sleeve_live,
         sleeve_parlays=args.sleeve_parlays,
         loss_limit_fraction=args.loss_limit_fraction,
+        goal_return=args.goal_return,
+        goal_weeks=args.goal_weeks,
+        goal_start=args.goal_start,
         bankroll_fallback=fallback,
     )
 
@@ -171,6 +202,21 @@ def _until(args) -> datetime:
     return slate_end(datetime.now(timezone.utc), args.days)
 
 
+def _progress(settings: Settings, ledger: Path) -> str:
+    flat_stake = None
+    if settings.bankroll is not None:
+        flat_stake = settings.pool("sides") * settings.flat_fraction
+    return season_progress(
+        season_money(ledger),
+        settings.bankroll,
+        settings.loss_limit_fraction,
+        goal=make_profit_goal(settings.goal_return, settings.goal_weeks, settings.goal_start),
+        today=datetime.now(EASTERN).date(),
+        flat_stake=flat_stake,
+        min_edge=settings.min_edge,
+    )
+
+
 def _headline(settings: Settings, until: datetime | None, verbose: bool, ledger: Path) -> None:
     if verbose:
         print(settings.describe())
@@ -181,7 +227,7 @@ def _headline(settings: Settings, until: datetime | None, verbose: bool, ledger:
             f"Bankroll ${settings.bankroll:,.2f}. "
             "A flat stake is 1% of that sleeve until the record qualifies."
         )
-    print(season_progress(season_money(ledger), settings.bankroll, settings.loss_limit_fraction))
+    print(_progress(settings, ledger))
     if until is not None:
         local = until.astimezone(EASTERN)
         print(f"Slate: kickoffs before {local:%a %b %d %I:%M %p ET}. Widen with --days.")
@@ -327,7 +373,7 @@ def _qualification(args) -> int:
     print()
     ledger = _ledger(args)
     print(f"Ledger: {ledger}")
-    print(season_progress(season_money(ledger), settings.bankroll, settings.loss_limit_fraction))
+    print(_progress(settings, ledger))
     if not ledger.exists():
         print("No ledger file yet. Every record stays on its flat stake.")
         print("Copy ledger.example.csv to ledger.csv and replace the examples with bets you place.")
