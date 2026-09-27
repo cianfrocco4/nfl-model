@@ -43,6 +43,32 @@ python -m nfl_model parlays --bankroll 1000 --slip 1,2:+265
 
 The default print is the stake list for the current NFL week, through Tuesday noon Eastern. `--days 7` widens that window. `--verbose` adds the leans, the passes, and every priced side. `board`, `props`, `live`, and `parlays` exit with setup instructions when `THE_ODDS_API_KEY` is missing.
 
+## What you do
+
+![What you do: check qualification, read board and props, place the stake at DraftKings, log it, then fill the close and the result](docs/user-workflow.svg)
+
+```mermaid
+flowchart TD
+  qual[Run qualification]
+  qual --> stop{Season stop?}
+  stop -->|Yes| none[Place nothing]
+  stop -->|No| read[Run board and props]
+  read --> stake{Dollar stake?}
+  stake -->|Lean or pass| skip[Do not bet that side]
+  stake -->|Yes| place[Place that amount at DraftKings]
+  place --> log[Write ledger.csv the same day]
+  log --> extra{Anything else?}
+  extra -->|Parlay| slip[parlays, then --slip with the DraftKings price]
+  extra -->|Game in play| live[live. No live props]
+  extra -->|Done| close[Fill the closing number]
+  slip --> close
+  live --> close
+  close --> result[Fill win, loss, or push]
+  result --> qual
+```
+
+Leave `close_number` and `result` blank until you know them. A row you never write is invisible to the loss stop.
+
 ## How to read a straight bet
 
 A stake line shows the dollars, the side, the kickoff in Eastern time, and the DraftKings American price. Pass `--verbose` when you want the model probability, the edge, and the market probability on every side. The market price is Pinnacle with the vig removed when Pinnacle has the same number. Otherwise it is the average of the other books on that number. A different number is not treated as the same bet.

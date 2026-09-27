@@ -1,0 +1,95 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 760" width="1280" height="760" role="img" aria-labelledby="title desc">
+  <title id="title">What you do with nfl-model</title>
+  <desc id="desc">Check qualification, read board and props, place a stake yourself at DraftKings, log it, then fill the close and the result.</desc>
+  <style>
+    .title { font: 700 28px ui-sans-serif, system-ui, sans-serif; fill: #1c1917; }
+    .sub { font: 400 15px ui-sans-serif, system-ui, sans-serif; fill: #57534e; }
+    .step { font: 700 13px ui-sans-serif, system-ui, sans-serif; fill: #1e3a5f; letter-spacing: 0.04em; }
+    .h { font: 700 18px ui-sans-serif, system-ui, sans-serif; fill: #1c1917; }
+    .p { font: 400 14px ui-sans-serif, system-ui, sans-serif; fill: #44403c; }
+    .cmd { font: 600 13px ui-monospace, ui-monospace, monospace; fill: #1e3a5f; }
+    .small { font: 400 13px ui-sans-serif, system-ui, sans-serif; fill: #57534e; }
+    .foot { font: 600 13px ui-sans-serif, system-ui, sans-serif; fill: #1c1917; }
+    .footp { font: 400 13px ui-sans-serif, system-ui, sans-serif; fill: #44403c; }
+  </style>
+  <rect width="1280" height="760" fill="#f6f3ee"/>
+  <text class="title" x="48" y="52">What you do</text>
+  <text class="sub" x="48" y="78">The tool suggests a stake. You place the bet at DraftKings. You write the row down.</text>
+
+  <rect x="48" y="108" width="220" height="250" rx="14" fill="#ffffff" stroke="#e7e5e4"/>
+  <text class="step" x="68" y="140">1  CHECK</text>
+  <text class="h" x="68" y="170">qualification</text>
+  <text class="p" x="68" y="202">Read the loss stop,</text>
+  <text class="p" x="68" y="222">the standing goals,</text>
+  <text class="p" x="68" y="242">and which records</text>
+  <text class="p" x="68" y="262">are still flat 1%.</text>
+  <text class="cmd" x="68" y="304">qualification</text>
+  <text class="small" x="68" y="330">Stop on? Place nothing.</text>
+
+  <path d="M276 230 H312" stroke="#a8a29e" stroke-width="2" fill="none"/>
+  <path d="M304 224 L314 230 L304 236" fill="#a8a29e"/>
+
+  <rect x="316" y="108" width="250" height="250" rx="14" fill="#ffffff" stroke="#e7e5e4"/>
+  <text class="step" x="336" y="140">2  READ</text>
+  <text class="h" x="336" y="170">board and props</text>
+  <text class="p" x="336" y="202">A dollar amount is a</text>
+  <text class="p" x="336" y="222">stake. Model and market</text>
+  <text class="p" x="336" y="242">both say the side is +EV.</text>
+  <text class="p" x="336" y="270">Lean or pass means $0.</text>
+  <text class="p" x="336" y="290">Do not bet that side.</text>
+  <text class="cmd" x="336" y="330">board    props</text>
+
+  <path d="M574 230 H610" stroke="#a8a29e" stroke-width="2" fill="none"/>
+  <path d="M602 224 L612 230 L602 236" fill="#a8a29e"/>
+
+  <rect x="614" y="108" width="280" height="250" rx="14" fill="#ffffff" stroke="#1f6b4a" stroke-width="2"/>
+  <text class="step" x="634" y="140" fill="#1f6b4a">3  YOU PLACE IT</text>
+  <text class="h" x="634" y="170">At DraftKings</text>
+  <text class="p" x="634" y="202">Bet the printed dollars</text>
+  <text class="p" x="634" y="222">on that side and price.</text>
+  <text class="p" x="634" y="250">The tool does not log in,</text>
+  <text class="p" x="634" y="270">and it does not bet.</text>
+  <text class="small" x="634" y="330">Same day, write the row.</text>
+
+  <path d="M902 230 H938" stroke="#a8a29e" stroke-width="2" fill="none"/>
+  <path d="M930 224 L940 230 L930 236" fill="#a8a29e"/>
+
+  <rect x="942" y="108" width="290" height="250" rx="14" fill="#ffffff" stroke="#e7e5e4"/>
+  <text class="step" x="962" y="140">4  LOG</text>
+  <text class="h" x="962" y="170">ledger.csv</text>
+  <text class="p" x="962" y="202">record, number, direction</text>
+  <text class="p" x="962" y="222">stake, American price</text>
+  <text class="p" x="962" y="258">Leave the close blank.</text>
+  <text class="p" x="962" y="278">Leave the result blank.</text>
+  <text class="small" x="962" y="330">A missing row is invisible</text>
+  <text class="small" x="962" y="348">to the loss stop.</text>
+
+  <rect x="48" y="390" width="560" height="168" rx="14" fill="#ffffff" stroke="#e7e5e4"/>
+  <text class="step" x="68" y="422">ALSO THAT SLATE</text>
+  <text class="h" x="68" y="452">Parlays</text>
+  <text class="p" x="68" y="480">Run parlays. Build 2 or 3 legs.</text>
+  <text class="p" x="68" y="500">Copy the DraftKings slip price.</text>
+  <text class="cmd" x="68" y="528">parlays --slip 1,2:+265</text>
+  <text class="small" x="300" y="452">Stake only if it prints dollars.</text>
+  <text class="small" x="300" y="474">Then log record parlays.</text>
+  <text class="h" x="300" y="512">Live</text>
+  <text class="small" x="300" y="536">While a game is on, run live. No live props.</text>
+
+  <rect x="632" y="390" width="600" height="168" rx="14" fill="#ffffff" stroke="#e7e5e4"/>
+  <text class="step" x="652" y="422">5  AFTER THE GAME</text>
+  <text class="h" x="652" y="452">Fill the same row</text>
+  <text class="p" x="652" y="484">When the number closes, write close_number.</text>
+  <text class="p" x="652" y="508">When it settles, write win, loss, or push.</text>
+  <text class="p" x="652" y="540">Run qualification again. That is the scoreboard.</text>
+
+  <path d="M180 358 V390" stroke="#a8a29e" stroke-width="2" fill="none"/>
+  <path d="M174 382 L180 392 L186 382" fill="#a8a29e"/>
+  <path d="M932 358 V390" stroke="#a8a29e" stroke-width="2" fill="none"/>
+  <path d="M926 382 L932 392 L938 382" fill="#a8a29e"/>
+
+  <rect x="48" y="582" width="1184" height="132" rx="14" fill="#1e3a5f"/>
+  <text class="foot" x="72" y="618" fill="#ffffff">Keep these in view</text>
+  <text class="footp" x="72" y="648" fill="#e7e5e4">Closing-line value above 0 on sides, totals, and props. Quarter Kelly waits for 100 graded bets.</text>
+  <text class="footp" x="72" y="670" fill="#e7e5e4">Losses inside 25% of the bankroll. About +1% by the postseason if the edge is real.</text>
+  <text class="footp" x="72" y="692" fill="#e7e5e4">Sleeves stay separate. A 20% gain in 3 weeks is not the plan, and it does not raise the stake.</text>
+</svg>
