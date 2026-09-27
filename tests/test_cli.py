@@ -51,6 +51,9 @@ def test_qualification_reports_the_season_stop(tmp_path: Path, capsys):
     output = capsys.readouterr().out
     assert "Season stop" in output
     assert "$-25.00" in output
+    assert "Standing goals:" in output
+    assert "about +$1.00 by the postseason" in output
+    assert "sides $-25.00" in output
 
 
 def test_parlays_without_api_key(monkeypatch, capsys):

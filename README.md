@@ -95,25 +95,25 @@ props,64.5,,over,receiving yards still open,0.20,-115,
 
 For each bet you actually place, also fill in `stake` (dollars), `american` (the DraftKings price, such as `-110` or `150`), and `result` once it settles (`win`, `loss`, or `push`). Leave `result` blank while the bet is open. A win's profit is the stake times the decimal odds minus the stake. A loss is minus the stake. A push is $0. Rows without those columns still grade closing-line value, and they are not included in the season profit.
 
-## Season goal
+## Standing goals
 
-Through the rest of the 2026 season and the postseason, on the bankroll you pass in:
+These are the goals the stake rule is built for. `qualification` prints them, and so does every stake list.
 
-- Record every stake you place, then its closing number and its result.
-- Treat average closing-line value above 0 as the skill check. Quarter Kelly still waits for 100 graded bets and that positive average.
-- Stop. Once settled losses reach 25% of that bankroll, `board`, `props`, `live`, and `parlays` suggest no new stakes. On $100 the stop is $25. `NFL_LOSS_LIMIT_FRACTION` changes the share.
+- **Skill.** Average closing-line value above 0, separately for sides, totals, and props. Quarter Kelly still waits for 100 graded bets and that positive average. Live and parlays stay flat.
+- **Risk.** Once settled losses reach 25% of the bankroll, `board`, `props`, `live`, and `parlays` suggest no new stakes. On $100 the stop is $25. `NFL_LOSS_LIMIT_FRACTION` changes the share.
+- **Season.** About +1% of the bankroll by the end of the postseason if a real edge of about 2 points is bet flat. On $100 that is about $1. On $1,000 that is about $10. Missing it is an ordinary result.
+- **Ledger.** Write every bet you place: stake, American price, result, and the closing number. A row with no close does not count toward qualification. A row with no stake does not move the loss stop.
+- **Sleeves.** Read profit by record. Sides are almost all of the dollars. Props, live, and parlays stay in their own sleeves.
 
-A profit goal is a separate progress check. It is a dollar target and a deadline, for example 20% of the bankroll in 3 weeks:
+Sides CLV averages spread points and moneyline decimals together. Props CLV averages yards, receptions, and touchdowns together. Read the sign and the count.
+
+A 20% gain in 3 weeks is not one of these goals. At a $6.50 sides stake, that dollar target needs far more bets than the slate has. An optional window can still be printed, and it leaves the stake on the locked rule:
 
 ```bash
 python -m nfl_model qualification --bankroll 1000 --goal-return 0.20 --goal-weeks 3 --goal-start 2026-09-27
 ```
 
-`qualification`, `board`, `props`, `live`, and `parlays` then show settled profit against that target and the days left. Hitting the target, or missing the date, leaves the stake on the locked rule. The loss stop is unchanged.
-
-On a $1,000 bankroll the sides stake is $6.50. An edge of 2 percentage points is at most $0.13 of expected profit on that bet, and the DraftKings vig takes part of it. $200 is at least about 1,500 such bets. Three weeks is at most 48 games. The goal reports that gap. It is not a promise, and it is not a reason to bet more.
-
-The model does not raise stakes to chase a dollar profit. A real edge of about 2 percentage points, bet flat at $0.65, is about a dollar of expected profit across the rest of this season. A cold run can still lose more than that before the stop. Archive `ledger.csv` and start a new file when you want the next season's stop to begin at $0.
+The model does not raise stakes to chase a dollar profit. A cold run can lose more than the season's expected profit before the stop. Archive `ledger.csv` and start a new file when you want the next season's stop to begin at $0. The ledger has no placed-on date, so a window counts every row in the file.
 
 ## Environment
 

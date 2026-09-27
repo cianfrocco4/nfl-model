@@ -39,11 +39,13 @@ from nfl_model.parlay import (
 from nfl_model.probabilities import total_outcomes
 from nfl_model.props_model import MARKET_FOR_STAT, build_prop_state, normalize_name, project_stat
 from nfl_model.qualification import (
+    ledger_status_text,
     make_profit_goal,
     qualification_report,
     season_money,
     season_progress,
     season_stop_note,
+    standing_goal_line,
 )
 from nfl_model.recommend import (
     EASTERN,
@@ -206,7 +208,7 @@ def _progress(settings: Settings, ledger: Path) -> str:
     flat_stake = None
     if settings.bankroll is not None:
         flat_stake = settings.pool("sides") * settings.flat_fraction
-    return season_progress(
+    progress = season_progress(
         season_money(ledger),
         settings.bankroll,
         settings.loss_limit_fraction,
@@ -215,6 +217,7 @@ def _progress(settings: Settings, ledger: Path) -> str:
         flat_stake=flat_stake,
         min_edge=settings.min_edge,
     )
+    return standing_goal_line(settings.bankroll, settings.loss_limit_fraction) + "\n" + progress
 
 
 def _headline(settings: Settings, until: datetime | None, verbose: bool, ledger: Path) -> None:
@@ -377,6 +380,8 @@ def _qualification(args) -> int:
     if not ledger.exists():
         print("No ledger file yet. Every record stays on its flat stake.")
         print("Copy ledger.example.csv to ledger.csv and replace the examples with bets you place.")
+    else:
+        print(ledger_status_text(ledger))
     for status in qualification_report(ledger):
         mean = "n/a" if status.mean_clv is None else f"{status.mean_clv:.3f}"
         print(f"  {status.record}: graded {status.graded}, average CLV {mean}, qualified {status.qualified}")

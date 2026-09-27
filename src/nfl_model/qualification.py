@@ -19,6 +19,8 @@ from pathlib import Path
 from nfl_model.odds_math import american_to_decimal
 
 QUALIFY_MIN_BETS = 100
+# About $1 of expected profit per $100 over the rest of a season at the locked flat stake.
+SEASON_EXPECTATION_FRACTION = 0.01
 # A full NFL week is 16 games. Bye weeks are smaller, so this is an upper bound.
 GAMES_PER_FULL_WEEK = 16
 RECORDS = ("sides", "totals", "props", "live", "parlays")
@@ -160,6 +162,7 @@ class SeasonMoney:
     losses: int
     pushes: int
     tracks_money: bool
+    record_profit: tuple[tuple[str, float], ...] = ()
 
 
 def bet_profit(stake: float, american: int | None, result: str) -> float:
@@ -190,6 +193,7 @@ def season_money(path: Path) -> SeasonMoney:
             return empty
         settled = unsettled = wins = losses = pushes = 0
         profit = 0.0
+        by_record = {record: 0.0 for record in RECORDS}
         for line_number, row in enumerate(reader, start=2):
             stake_raw = (row.get("stake") or "").strip()
             american_raw = (row.get("american") or "").strip()
@@ -212,7 +216,11 @@ def season_money(path: Path) -> SeasonMoney:
                 continue
             if result == "win" and american is None:
                 raise LedgerError(f"{path}:{line_number} a win needs american odds")
-            profit += bet_profit(stake, american, result)
+            delta = bet_profit(stake, american, result)
+            profit += delta
+            record = (row.get("record") or "").strip()
+            if record in by_record:
+                by_record[record] += delta
             settled += 1
             if result == "win":
                 wins += 1
@@ -220,7 +228,16 @@ def season_money(path: Path) -> SeasonMoney:
                 losses += 1
             else:
                 pushes += 1
-    return SeasonMoney(settled, unsettled, profit, wins, losses, pushes, True)
+    return SeasonMoney(
+        settled,
+        unsettled,
+        profit,
+        wins,
+        losses,
+        pushes,
+        True,
+        tuple((name, by_record[name]) for name in RECORDS),
+    )
 
 
 def loss_limit_reached(money: SeasonMoney, bankroll: float | None, fraction: float) -> bool:
@@ -239,6 +256,82 @@ def season_stop_note(money: SeasonMoney, bankroll: float | None, fraction: float
         f"Season stop: settled profit is ${money.profit:,.2f}, "
         f"at or below -${limit:,.2f}. No new stake."
     )
+
+
+@dataclass(frozen=True)
+class LedgerGaps:
+    rows: int
+    missing_close: int
+    missing_stake: int
+    open_bets: int
+
+
+def ledger_gaps(path: Path) -> LedgerGaps | None:
+    """Count rows the standing goals cannot score yet.
+
+    A missing close cannot qualify a record. A missing stake cannot move the
+    loss stop. A stake with no result is still open.
+    """
+    if not path.exists():
+        return None
+    with path.open(newline="") as handle:
+        reader = csv.DictReader(handle)
+        if reader.fieldnames is None:
+            raise LedgerError(f"{path} is empty. Expected columns: {', '.join(LEDGER_FIELDS)}")
+        tracks_money = any(name in reader.fieldnames for name in MONEY_FIELDS)
+        rows = missing_close = missing_stake = open_bets = 0
+        for row in reader:
+            if (row.get("record") or "").strip() not in RECORDS:
+                continue
+            rows += 1
+            if (row.get("close_number") or "").strip() == "":
+                missing_close += 1
+            if not tracks_money:
+                missing_stake += 1
+                continue
+            stake = (row.get("stake") or "").strip()
+            result = (row.get("result") or "").strip()
+            if stake == "" and result == "":
+                missing_stake += 1
+            elif result == "":
+                open_bets += 1
+    return LedgerGaps(rows, missing_close, missing_stake, open_bets)
+
+
+def standing_goal_line(bankroll: float | None, loss_fraction: float) -> str:
+    """One line for every stake list. Dollars follow the bankroll that was passed in."""
+    if bankroll is None or bankroll <= 0:
+        return (
+            "Standing goals: CLV above 0 on sides, totals, and props; the loss stop; "
+            "about +1% by the postseason; a complete ledger; separate sleeves."
+        )
+    expected = bankroll * SEASON_EXPECTATION_FRACTION
+    stop = bankroll * loss_fraction
+    return (
+        "Standing goals: CLV above 0 on sides, totals, and props; "
+        f"losses inside ${stop:,.2f}; about +${expected:,.2f} by the postseason if the edge is real; "
+        "a complete ledger; separate sleeves."
+    )
+
+
+def ledger_status_text(path: Path) -> str:
+    """How to read the ledger against the standing goals."""
+    gaps = ledger_gaps(path)
+    if gaps is None:
+        return "Ledger: no file yet. Write every bet down, or the loss stop cannot see it."
+    lines = [
+        "CLV units: sides mix spread points and moneyline decimals. "
+        "Props mix yards, receptions, and touchdowns. Read the sign and the count.",
+        (
+            f"Ledger: {gaps.rows} rows, {gaps.missing_close} missing a close, "
+            f"{gaps.missing_stake} missing a stake, {gaps.open_bets} still open."
+        ),
+    ]
+    money = season_money(path)
+    if money.record_profit:
+        parts = [f"{name} ${amount:,.2f}" for name, amount in money.record_profit]
+        lines.append("Settled profit by record: " + ", ".join(parts) + ".")
+    return "\n".join(lines)
 
 
 @dataclass(frozen=True)

@@ -30,6 +30,7 @@ from nfl_model.qualification import (
     closing_line_value,
     grade_record,
     qualification_report,
+    ledger_gaps,
     make_profit_goal,
     season_money,
     season_progress,
@@ -323,6 +324,25 @@ def test_profit_goal_is_a_progress_check_and_leaves_the_stake():
         flat_stake=6.50,
     )
     assert "has reached $200.00" in reached
+
+
+def test_ledger_gaps_and_profit_by_record(tmp_path: Path):
+    ledger = tmp_path / "ledger.csv"
+    ledger.write_text(
+        "record,bet_number,close_number,direction,note,stake,american,result\n"
+        "sides,-3.5,-6.5,spread,won,10,-110,win\n"
+        "props,64.5,,over,open,2,-115,\n"
+        "totals,47.5,49,over,no stake,,,\n"
+    )
+    money = season_money(ledger)
+    assert math.isclose(dict(money.record_profit)["sides"], 10 * (american_to_decimal(-110) - 1))
+    assert dict(money.record_profit)["props"] == 0
+    gaps = ledger_gaps(ledger)
+    assert gaps is not None
+    assert gaps.rows == 3
+    assert gaps.missing_close == 1
+    assert gaps.missing_stake == 1
+    assert gaps.open_bets == 1
 
 
 def test_profit_goal_requires_return_weeks_and_start():
