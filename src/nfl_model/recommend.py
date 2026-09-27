@@ -16,7 +16,7 @@ from nfl_model.odds_api import ScoreState, SidePrice
 from nfl_model.odds_math import american_to_decimal, edge, expected_value, fair_american, format_american
 from nfl_model.probabilities import moneyline_outcomes, spread_outcomes, total_outcomes
 from nfl_model.props_model import MARKET_FOR_STAT, PlayerProjection, PropState, normalize_name, project_stat
-from nfl_model.qualification import SeasonMoney, pool_name, season_stop_note
+from nfl_model.qualification import SeasonMoney, bet_identity, pool_name, season_stop_note
 from nfl_model.settings import FairPriceSource, Settings
 from nfl_model.staking import fit_stakes_to_cash, method_for_policy, stake_dollars
 from nfl_model.team_model import ModelState, ScoreForecast, forecast_matchup
@@ -78,6 +78,8 @@ class Decision:
     note: str
     fair_american: int | None
     kickoff: datetime | None = None
+    bet_number: float | None = None
+    direction: str = ""
 
 
 def _signal(p_win: float, p_push: float, decimal_odds: float, novig: float, settings: Settings) -> tuple[float, float, bool]:
@@ -104,6 +106,8 @@ def decide(
     settings: Settings,
     qualified: bool,
     kickoff: datetime | None = None,
+    bet_number: float | None = None,
+    direction: str = "",
 ) -> Decision:
     decimal_odds = american_to_decimal(dk_american)
     p_loss = 1.0 - p_win - p_push
@@ -193,6 +197,8 @@ def decide(
         note=note,
         fair_american=quoted,
         kickoff=kickoff,
+        bet_number=bet_number,
+        direction=direction,
     )
 
 
@@ -211,27 +217,11 @@ def apply_cash_limit(rows: list[Decision], settings: Settings) -> list[Decision]
             reason = row.reason
             if stake < row.stake:
                 reason += " Stake scaled so this slate fits in the sleeve."
-            updated[index] = Decision(
-                game=row.game,
-                market=row.market,
-                side=row.side,
-                record=row.record,
-                dk_american=row.dk_american,
-                model_probability=row.model_probability,
-                model_edge=row.model_edge,
-                model_ev=row.model_ev,
-                model_plus=row.model_plus,
-                market_probability=row.market_probability,
-                market_edge=row.market_edge,
-                market_ev=row.market_ev,
-                market_plus=row.market_plus,
-                market_source=row.market_source,
+            updated[index] = replace(
+                row,
                 status="stake" if stake > 0 else row.status,
                 stake=stake,
                 reason=reason,
-                note=row.note,
-                fair_american=row.fair_american,
-                kickoff=row.kickoff,
             )
     return updated
 
@@ -272,6 +262,10 @@ def pregame_board(
         if outcomes is None:
             continue
         p_win, p_push, record = outcomes
+        identity = _bet_identity(price)
+        if identity is None:
+            continue
+        bet_number, direction = identity
         rows.append(
             decide(
                 game=f"{price.away} at {price.home}",
@@ -288,6 +282,8 @@ def pregame_board(
                 settings=settings,
                 qualified=qualified.get(record, False),
                 kickoff=price.commence,
+                bet_number=bet_number,
+                direction=direction,
             )
         )
     return apply_cash_limit(rows, settings)
@@ -331,6 +327,10 @@ def live_board(
         if outcomes is None:
             continue
         p_win, p_push, _record = outcomes
+        identity = _bet_identity(price)
+        if identity is None:
+            continue
+        bet_number, direction = identity
         note = (
             f"Score {score.away_score}-{score.home_score} (away-home). "
             f"Estimated {fraction:.0%} elapsed from the wall clock and the scoring pace, not the game clock. "
@@ -352,6 +352,8 @@ def live_board(
                 settings=settings,
                 qualified=False,
                 kickoff=price.commence,
+                bet_number=bet_number,
+                direction=direction,
             )
         )
     if not seen_live:
@@ -391,6 +393,10 @@ def prop_board(
         if outcomes is None:
             continue
         p_win, p_push = outcomes
+        identity = _bet_identity(price)
+        if identity is None:
+            continue
+        bet_number, direction = identity
         rows.append(
             decide(
                 game=f"{price.description} ({price.away} at {price.home})",
@@ -407,6 +413,8 @@ def prop_board(
                 settings=settings,
                 qualified=qualified.get("props", False),
                 kickoff=price.commence,
+                bet_number=bet_number,
+                direction=direction,
             )
         )
     return apply_cash_limit(rows, settings)
@@ -424,17 +432,30 @@ def _kickoff(row: Decision) -> str:
     return "  " + local.strftime("%a %b %d %I:%M %p ET")
 
 
-def render(rows: list[Decision], heading: str, *, verbose: bool = False) -> str:
+def _bet_identity(price: SidePrice) -> tuple[float, str] | None:
+    try:
+        return bet_identity(price.market, price.side_name, price.point, price.dk_american)
+    except ValueError:
+        return None
+
+
+def render(rows: list[Decision], heading: str, *, verbose: bool = False, log_source: str | None = None) -> str:
     stakes = [row for row in rows if row.stake > 0]
     leans = [row for row in rows if row.status == "lean"]
     lines = [heading, ""]
     if stakes:
         lines.append("Suggested stakes (you place these yourself):")
-        for row in stakes:
+        for number, row in enumerate(stakes, start=1):
             lines.append(
-                f"  ${row.stake:,.2f}  {row.game}  {row.side}{_kickoff(row)}  "
+                f"  {number}  ${row.stake:,.2f}  {row.game}  {row.side}{_kickoff(row)}  "
                 f"DK {format_american(row.dk_american)}  {row.reason}"
             )
+        if log_source:
+            lines.append(
+                f"Log the ones you place before you run this again: "
+                f"python -m nfl_model log {log_source} --accept 1"
+            )
+            lines.append("If DraftKings moved the price: --price 1:-108")
     else:
         lines.append("Suggested stakes: none.")
     hidden = len(rows) - len(stakes)

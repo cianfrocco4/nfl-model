@@ -61,6 +61,24 @@ class RecordStatus:
         return text
 
 
+def bet_identity(market: str, side_name: str, point: float | None, american: int) -> tuple[float, str]:
+    """The ledger number and direction for one accepted straight bet.
+
+    Moneylines and anytime touchdowns use decimal odds. Spreads use the point
+    on the side you bet. Totals and yard props use the line, over or under.
+    """
+    if market in {"h2h", "player_anytime_td"}:
+        return round(american_to_decimal(american), 4), "decimal"
+    if market == "spreads":
+        if point is None:
+            raise ValueError("a spread stake needs a point")
+        return point, "spread"
+    direction = side_name.lower()
+    if direction not in {"over", "under"} or point is None:
+        raise ValueError(f"a {market} stake needs an over or under and a line")
+    return point, direction
+
+
 def closing_line_value(bet_number: float, close_number: float, direction: str) -> float:
     """Positive when the close moved in the bettor's favor.
 

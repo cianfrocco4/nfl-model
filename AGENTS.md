@@ -22,3 +22,4 @@ Every future change should serve these goals. A dollar target does not change st
 - Sides CLV mixes spread points and moneyline decimals. Props CLV mixes yards, receptions, and touchdowns. Do not add more mixed units. Prefer same-unit CLV, or the share of bets with positive CLV, if qualification changes.
 - The ledger has no placed-on date, so a time window counts the whole file. Add a date and count rows inside the window, or archive the file when a window starts.
 - The loss stop cannot see a bet that was never written down. New stake suggestions should be loggable.
+- Accepted stakes are written with `python -m nfl_model log <board|props|live|parlays> --accept`. Log only numbers the user accepts. Leave close and result blank. Do not log into DraftKings.

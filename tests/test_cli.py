@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from nfl_model.cli import main
+from nfl_model.ledger_log import StakeOffer, save_offers
 from nfl_model.odds_api import API_KEY_HELP, build_side_prices, coerce_events, parse_outcomes
 
 
@@ -54,6 +55,48 @@ def test_qualification_reports_the_season_stop(tmp_path: Path, capsys):
     assert "Standing goals:" in output
     assert "about +$1.00 by the postseason" in output
     assert "sides $-25.00" in output
+
+
+def test_log_writes_only_accepted_stakes(tmp_path: Path, monkeypatch, capsys):
+    saved = tmp_path / "board.json"
+    monkeypatch.setattr("nfl_model.cli.offers_path", lambda source, root=None: saved)
+    save_offers(
+        saved,
+        [
+            StakeOffer(1, "sides", -3.5, "spread", "A at B Home -3.5", 6.5, -110),
+            StakeOffer(2, "totals", 47.5, "over", "A at B Over 47.5", 6.5, -105),
+        ],
+    )
+    ledger = tmp_path / "ledger.csv"
+    code = main(["log", "board", "--accept", "1", "--price", "1:-108", "--ledger", str(ledger)])
+    assert code == 0
+    output = capsys.readouterr().out
+    assert "Logged 1 stake" in output
+    assert "Close and result are blank." in output
+    row = ledger.read_text().splitlines()[1]
+    assert row == "sides,-3.5,,spread,A at B Home -3.5,6.50,-108,"
+
+    code = main(["log", "board", "--accept", "1,2", "--ledger", str(ledger)])
+    assert code == 0
+    again = capsys.readouterr().out
+    assert "Already open" in again
+    lines = ledger.read_text().splitlines()
+    assert len(lines) == 3
+    assert lines[2].startswith("totals,47.5,,over,")
+
+    code = main(["log", "board", "--accept", "9", "--ledger", str(ledger)])
+    assert code == 2
+    assert "9" in capsys.readouterr().err
+    assert len(ledger.read_text().splitlines()) == 3
+
+
+def test_log_without_a_saved_list_fails(tmp_path: Path, monkeypatch, capsys):
+    missing = tmp_path / "props.json"
+    monkeypatch.setattr("nfl_model.cli.offers_path", lambda source, root=None: missing)
+    code = main(["log", "props", "--accept", "1", "--ledger", str(tmp_path / "ledger.csv")])
+    assert code == 2
+    assert "No saved props stakes" in capsys.readouterr().err
+    assert not (tmp_path / "ledger.csv").exists()
 
 
 def test_parlays_without_api_key(monkeypatch, capsys):
