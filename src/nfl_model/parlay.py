@@ -414,30 +414,46 @@ def apply_slip(
     return price_ticket(chosen, american, settings, rho_margin_total)
 
 
-def render_parlays(legs: list[ParlayLeg], suggestions: list[ParlayTicket], priced: list[ParlayTicket]) -> str:
+def render_parlays(
+    legs: list[ParlayLeg],
+    suggestions: list[ParlayTicket],
+    priced: list[ParlayTicket],
+    *,
+    verbose: bool = False,
+) -> str:
     lines = [
         "Parlays are 2 or 3 legs. Same-game tickets are correlation-adjusted. Cross-game tickets multiply.",
         "Each leg with a straight price must pass both-agree. The stake is flat 1% of the parlay sleeve.",
         "The Odds API does not publish DraftKings parlay prices. Copy the price from the DraftKings slip.",
-        "Example: python -m nfl_model parlays --bankroll 1000 --slip 1,2:+265",
+        "Example: python -m nfl_model parlays --bankroll 100 --slip 1,2:+265",
         "",
-        "Legs:",
+        "Legs that both-agree (numbers are the --slip indexes):",
     ]
-    if not legs:
-        lines.append("  None. No straight leg was priced.")
+    shown = legs if verbose else [leg for leg in legs if leg.both_agree]
+    if not shown:
+        lines.append("  None. No straight leg passed both-agree." if not verbose else "  None. No straight leg was priced.")
+    hidden = 0
     for index, leg in enumerate(legs, start=1):
+        if not verbose and not leg.both_agree:
+            hidden += 1
+            continue
         flag = "both-agree" if leg.both_agree else "not both-agree"
         lines.append(f"  [{index}] {leg.label}  model {leg.p_win:.1%}  {flag}")
+    if hidden:
+        lines.append(f"{hidden} legs did not both-agree. Pass --verbose to list them.")
     lines.append("")
     lines.append("Fair prices with no DraftKings ticket yet (stake $0):")
     if not suggestions:
         lines.append("  No 2- or 3-leg ticket has every leg both-agree.")
-    for ticket in suggestions:
+    visible = suggestions if verbose else suggestions[:8]
+    for ticket in visible:
         labels = " + ".join(leg.label for leg in ticket.legs)
         lines.append(
             f"  {ticket.kind}  fair {ticket.fair_price}  joint {ticket.joint:.1%}  "
             f"if independent {ticket.independent:.1%}  {labels}"
         )
+    if not verbose and len(suggestions) > len(visible):
+        lines.append(f"  {len(suggestions) - len(visible)} more tickets. Pass --verbose to list them.")
     if priced:
         lines.append("")
         lines.append("Slips you priced from DraftKings:")

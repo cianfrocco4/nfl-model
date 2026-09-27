@@ -100,6 +100,17 @@ class ApiPayload:
     last_cost: str | None
 
 
+def coerce_events(body: object, path: str) -> list:
+    """Odds and scores return a list. One event's odds return a single object."""
+    if isinstance(body, list):
+        return body
+    if isinstance(body, dict):
+        if body.get("message") and "bookmakers" not in body and "id" not in body:
+            raise OddsApiError(f"The Odds API said: {body['message']} ({path})")
+        return [body]
+    raise OddsApiError(f"Unexpected response from {path}")
+
+
 def require_api_key() -> str:
     key = os.environ.get("THE_ODDS_API_KEY", "").strip()
     if not key:
@@ -131,10 +142,8 @@ def _request(path: str, params: dict[str, str], key: str) -> ApiPayload:
         raise OddsApiError(f"The Odds API returned HTTP {exc.code} for {path}.\n{detail}") from exc
     except urllib.error.URLError as exc:
         raise OddsApiError(f"Could not reach The Odds API ({path}): {exc.reason}") from exc
-    if not isinstance(body, list):
-        raise OddsApiError(f"Unexpected response from {path}")
     return ApiPayload(
-        body=body,
+        body=coerce_events(body, path),
         remaining=headers.get("x-requests-remaining"),
         last_cost=headers.get("x-requests-last"),
     )

@@ -41,11 +41,11 @@ python -m nfl_model parlays --bankroll 1000
 python -m nfl_model parlays --bankroll 1000 --slip 1,2:+265
 ```
 
-`board`, `props`, `live`, and `parlays` exit with setup instructions when `THE_ODDS_API_KEY` is missing.
+The default print is the stake list for the current NFL week, through Tuesday noon Eastern. `--days 7` widens that window. `--verbose` adds the leans, the passes, and every priced side. `board`, `props`, `live`, and `parlays` exit with setup instructions when `THE_ODDS_API_KEY` is missing.
 
 ## How to read a straight bet
 
-Each row shows the DraftKings American price, the model probability and edge, and the market probability and edge. The market price is Pinnacle with the vig removed when Pinnacle has the same number. Otherwise it is the average of the other books on that number. A different number is not treated as the same bet.
+A stake line shows the dollars, the side, the kickoff in Eastern time, and the DraftKings American price. Pass `--verbose` when you want the model probability, the edge, and the market probability on every side. The market price is Pinnacle with the vig removed when Pinnacle has the same number. Otherwise it is the average of the other books on that number. A different number is not treated as the same bet.
 
 - **stake**: model and market are both +EV. The dollars are the suggestion.
 - **lean**: only one signal is +EV, or the market price is missing. Stake $0.
@@ -55,7 +55,7 @@ Edge is the model's win probability (ignoring pushes) minus the no-vig DraftKing
 
 ## Parlays
 
-`parlays` lists every priced straight leg, then fair prices for 2- and 3-leg tickets whose legs already both-agree.
+`parlays` lists the straight legs that already both-agree, keeping the numbers you pass to `--slip`, then fair prices for 2- and 3-leg tickets built from those legs. `--verbose` lists the legs that did not agree.
 
 - Cross-game: the joint probability is the product of the leg probabilities.
 - Same-game spread, total, and moneyline: one normal margin and one normal total, with the correlation estimated from historical residuals. A moneyline and a spread on the same team are the same margin, so the joint is the stricter leg, not the product.
@@ -85,13 +85,25 @@ Closing-line value is the closing number minus the bet number, in the direction 
 Track graded bets in `ledger.csv` (see `ledger.example.csv`):
 
 ```csv
-record,bet_number,close_number,direction,note
-sides,-3.5,-6.5,spread,home spread
-totals,47.5,49,over,game total
-props,64.5,71.5,over,receiving yards
+record,bet_number,close_number,direction,note,stake,american,result
+sides,-3.5,-6.5,spread,home spread,0.65,-110,win
+totals,47.5,49,over,game total,0.65,-110,loss
+props,64.5,,over,receiving yards still open,0.20,-115,
 ```
 
-`record` is `sides`, `totals`, `props`, `live`, or `parlays`. Live and parlays are shown but never upgrade. Until a straight record has 100 graded rows and a positive average, that record stays at flat 1%.
+`record` is `sides`, `totals`, `props`, `live`, or `parlays`. Live and parlays are shown but never upgrade. Until a straight record has 100 graded rows and a positive average, that record stays at flat 1%. Leave `close_number` blank until the game closes. `qualification` counts that row and tells you it does not count yet.
+
+For each bet you actually place, also fill in `stake` (dollars), `american` (the DraftKings price, such as `-110` or `150`), and `result` once it settles (`win`, `loss`, or `push`). Leave `result` blank while the bet is open. A win's profit is the stake times the decimal odds minus the stake. A loss is minus the stake. A push is $0. Rows without those columns still grade closing-line value, and they are not included in the season profit.
+
+## Season goal
+
+Through the rest of the 2026 season and the postseason, on the bankroll you pass in:
+
+- Record every stake you place, then its closing number and its result.
+- Treat average closing-line value above 0 as the skill check. Quarter Kelly still waits for 100 graded bets and that positive average.
+- Stop. Once settled losses reach 25% of that bankroll, `board`, `props`, `live`, and `parlays` suggest no new stakes. On $100 the stop is $25. `NFL_LOSS_LIMIT_FRACTION` changes the share.
+
+The model does not raise stakes to chase a dollar profit. A real edge of about 2 percentage points, bet flat at $0.65, is about a dollar of expected profit across the rest of this season. A cold run can still lose more than that before the stop. Archive `ledger.csv` and start a new file when you want the next season's stop to begin at $0.
 
 ## Environment
 
@@ -110,6 +122,7 @@ props,64.5,71.5,over,receiving yards
 | `NFL_SLEEVE_PROPS` | `0.20` | |
 | `NFL_SLEEVE_LIVE` | `0.10` | |
 | `NFL_SLEEVE_PARLAYS` | `0.05` | |
+| `NFL_LOSS_LIMIT_FRACTION` | `0.25` | Stop new stakes after settled losses reach this share of the bankroll |
 | `NFL_UNIT_SIZE` | 1% of the sleeve | Used only with `--staking units` |
 
 ## Model
@@ -131,6 +144,7 @@ Live lines start from that pregame forecast, then add the current score and the 
 - Several bets on the same slate share one sleeve. If the suggestions add up to more than the sleeve, they are scaled down.
 - Player names are matched by a normalized string. A mismatch is skipped.
 - No parlays longer than 3 legs, no live parlays, no arbitrage, and no martingale.
+- The season stop uses settled rows in `ledger.csv`. It cannot see a bet you placed and did not write down. Unsettled rows, and rows with no stake, are not losses yet.
 
 ## Tests
 

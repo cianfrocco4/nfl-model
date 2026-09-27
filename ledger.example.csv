@@ -1,4 +1,4 @@
-record,bet_number,close_number,direction,note
-sides,-3.5,-6.5,spread,Example only. Favorite -3.5 that closed -6.5. Do not grade this file.
-totals,47.5,49,over,Example only. Over 47.5 that closed 49.
-props,64.5,71.5,over,Example only. A receiving-yards over.
+record,bet_number,close_number,direction,note,stake,american,result
+sides,-3.5,-6.5,spread,Example only. Favorite -3.5 that closed -6.5. Do not grade this file.,,,
+totals,47.5,49,over,Example only. Over 47.5 that closed 49.,,,
+props,64.5,71.5,over,Example only. A receiving-yards over.,,,

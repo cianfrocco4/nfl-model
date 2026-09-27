@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from nfl_model.backtest import run_backtest
-from nfl_model.data_nflverse import completed_games, load_games, load_player_weeks
+from nfl_model.data_nflverse import completed_games, load_games, load_player_weeks, project_root
 from nfl_model.odds_api import (
     MissingApiKeyError,
     OddsApiError,
@@ -36,17 +36,26 @@ from nfl_model.parlay import (
     render_parlays,
     suggest_tickets,
 )
-from nfl_model.probabilities import moneyline_outcomes, spread_outcomes, total_outcomes
+from nfl_model.probabilities import total_outcomes
 from nfl_model.props_model import MARKET_FOR_STAT, build_prop_state, normalize_name, project_stat
-from nfl_model.qualification import qualification_report
-from nfl_model.recommend import decide, live_board, pregame_board, prop_board, qualified_map, render
+from nfl_model.qualification import qualification_report, season_money, season_progress, season_stop_note
+from nfl_model.recommend import (
+    EASTERN,
+    apply_season_loss_limit,
+    live_board,
+    pregame_board,
+    prop_board,
+    qualified_map,
+    render,
+    signals_agree,
+    slate_end,
+)
 from nfl_model.settings import MissingBankrollError, Settings, SettingsError, load_settings
 from nfl_model.staking import fit_stakes_to_cash
 from nfl_model.team_model import forecast_matchup, walk_forward
 from nfl_model.teams import franchise_from_name
 
 STAT_FOR_MARKET = {market: stat for stat, market in MARKET_FOR_STAT.items()}
-DEFAULT_LEDGER = Path(__file__).resolve().parents[2] / "ledger.csv"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -77,8 +86,21 @@ def _parser() -> argparse.ArgumentParser:
     common.add_argument("--sleeve-props", type=float, default=None)
     common.add_argument("--sleeve-live", type=float, default=None)
     common.add_argument("--sleeve-parlays", type=float, default=None)
-    common.add_argument("--ledger", type=Path, default=DEFAULT_LEDGER)
+    common.add_argument(
+        "--loss-limit-fraction",
+        type=float,
+        default=None,
+        help="Stop new stakes after settled losses reach this share of the bankroll. Default is 0.25.",
+    )
+    common.add_argument("--ledger", type=Path, default=None)
     common.add_argument("--refresh", action="store_true")
+    common.add_argument("--verbose", action="store_true", help="Show leans, passes, and every priced side.")
+    common.add_argument(
+        "--days",
+        type=float,
+        default=None,
+        help="How many days of kickoffs to include. Default is the current NFL week, through Tuesday noon Eastern.",
+    )
     parser = argparse.ArgumentParser(
         prog="nfl_model",
         description=(
@@ -128,12 +150,42 @@ def _settings(args, *, fallback: float | None = None) -> Settings:
         sleeve_props=args.sleeve_props,
         sleeve_live=args.sleeve_live,
         sleeve_parlays=args.sleeve_parlays,
+        loss_limit_fraction=args.loss_limit_fraction,
         bankroll_fallback=fallback,
     )
 
 
+def _ledger(args) -> Path:
+    return args.ledger if args.ledger is not None else project_root() / "ledger.csv"
+
+
 def _qualified(args) -> dict[str, bool]:
-    return qualified_map(qualification_report(args.ledger))
+    return qualified_map(qualification_report(_ledger(args)))
+
+
+def _money(args):
+    return season_money(_ledger(args))
+
+
+def _until(args) -> datetime:
+    return slate_end(datetime.now(timezone.utc), args.days)
+
+
+def _headline(settings: Settings, until: datetime | None, verbose: bool, ledger: Path) -> None:
+    if verbose:
+        print(settings.describe())
+    elif settings.bankroll is None:
+        print("Bankroll is not set.")
+    else:
+        print(
+            f"Bankroll ${settings.bankroll:,.2f}. "
+            "A flat stake is 1% of that sleeve until the record qualifies."
+        )
+    print(season_progress(season_money(ledger), settings.bankroll, settings.loss_limit_fraction))
+    if until is not None:
+        local = until.astimezone(EASTERN)
+        print(f"Slate: kickoffs before {local:%a %b %d %I:%M %p ET}. Widen with --days.")
+    print()
 
 
 def _backtest(args) -> int:
@@ -147,13 +199,23 @@ def _backtest(args) -> int:
 def _board(args) -> int:
     settings = _settings(args)
     key = require_api_key()
-    print(settings.describe())
-    print()
+    until = _until(args)
+    _headline(settings, until, args.verbose, _ledger(args))
     state, _predictions, rho = _model(args.refresh)
     payload = fetch_game_odds(key)
     _credits(payload.remaining, payload.last_cost)
-    rows = pregame_board(build_side_prices(parse_outcomes(payload.body)), state, settings, _qualified(args))
-    print(render(rows, "Pregame board"))
+    rows = apply_season_loss_limit(
+        pregame_board(
+            build_side_prices(parse_outcomes(payload.body)),
+            state,
+            settings,
+            _qualified(args),
+            until=until,
+        ),
+        settings,
+        _money(args),
+    )
+    print(render(rows, "Pregame board", verbose=args.verbose))
     print(f"\nSame-game margin/total correlation from history: {rho:+.2f}")
     return 0
 
@@ -161,22 +223,25 @@ def _board(args) -> int:
 def _props(args) -> int:
     settings = _settings(args)
     key = require_api_key()
-    print(settings.describe())
-    print()
+    until = _until(args)
+    _headline(settings, until, args.verbose, _ledger(args))
     props = build_prop_state(load_player_weeks(refresh=args.refresh))
-    prices, notes = _prop_prices(key, args.max_events)
+    prices, notes = _prop_prices(key, args.max_events, until)
     for note in notes:
         print(note)
-    rows = prop_board(prices, props, settings, _qualified(args))
-    print(render(rows, "Pregame props"))
+    rows = apply_season_loss_limit(
+        prop_board(prices, props, settings, _qualified(args), until=until),
+        settings,
+        _money(args),
+    )
+    print(render(rows, "Pregame props", verbose=args.verbose))
     return 0
 
 
 def _live(args) -> int:
     settings = _settings(args)
     key = require_api_key()
-    print(settings.describe())
-    print()
+    _headline(settings, None, args.verbose, _ledger(args))
     state, _predictions, _rho = _model(args.refresh)
     odds = fetch_game_odds(key)
     scores = fetch_scores(key)
@@ -188,9 +253,10 @@ def _live(args) -> int:
         settings,
         _qualified(args),
     )
+    rows = apply_season_loss_limit(rows, settings, _money(args))
     for note in notes:
         print(note)
-    print(render(rows, "Live board"))
+    print(render(rows, "Live board", verbose=args.verbose))
     print(
         "\nLive prices use the current score and a blend of wall-clock time and scoring pace. "
         "They do not know possession, down, or the official clock. Live props are not staked."
@@ -201,20 +267,20 @@ def _live(args) -> int:
 def _parlays(args) -> int:
     settings = _settings(args)
     key = require_api_key()
-    print(settings.describe())
-    print()
+    until = _until(args)
+    _headline(settings, until, args.verbose, _ledger(args))
     state, predictions, rho = _model(args.refresh)
     odds = fetch_game_odds(key)
     _credits(odds.remaining, odds.last_cost)
     prices = build_side_prices(parse_outcomes(odds.body))
     qualified = _qualified(args)
-    legs = _game_legs(prices, state, settings, qualified)
+    legs = _game_legs(prices, state, settings, qualified, until)
     if not args.no_props:
-        prop_prices, notes = _prop_prices(key, args.max_events)
+        prop_prices, notes = _prop_prices(key, args.max_events, until)
         for note in notes:
             print(note)
         props = build_prop_state(load_player_weeks(refresh=args.refresh))
-        legs.extend(_prop_legs(prop_prices, props, settings, qualified))
+        legs.extend(_prop_legs(prop_prices, props, settings, qualified, until))
     suggestions = suggest_tickets(legs, settings, rho)
     priced = []
     for slip in args.slip:
@@ -232,21 +298,40 @@ def _parlays(args) -> int:
             )
             for ticket, stake in zip(priced, stakes)
         ]
-    print(render_parlays(legs, suggestions, priced))
+    priced = _stop_tickets(priced, settings, _money(args))
+    print(render_parlays(legs, suggestions, priced, verbose=args.verbose))
     print(f"\nMargin/total correlation used for same-game tickets: {rho:+.2f}")
     print(f"History rows behind that correlation: {len(predictions)}")
     return 0
 
 
+def _stop_tickets(tickets, settings: Settings, money):
+    note = season_stop_note(money, settings.bankroll, settings.loss_limit_fraction)
+    if note is None:
+        return tickets
+    stopped = []
+    for ticket in tickets:
+        if ticket.stake <= 0:
+            stopped.append(ticket)
+            continue
+        stopped.append(replace(ticket, stake=0.0, status="pass", reason=f"{ticket.reason} {note}"))
+    return stopped
+
+
 def _qualification(args) -> int:
-    settings = _settings(args, fallback=1000.0)
-    print(settings.describe())
+    settings = _settings(args)
+    if settings.bankroll is None:
+        print("Bankroll is not set. Pass --bankroll or NFL_BANKROLL to size the season stop.")
+    else:
+        print(settings.describe())
     print()
-    print(f"Ledger: {args.ledger}")
-    if not args.ledger.exists():
+    ledger = _ledger(args)
+    print(f"Ledger: {ledger}")
+    print(season_progress(season_money(ledger), settings.bankroll, settings.loss_limit_fraction))
+    if not ledger.exists():
         print("No ledger file yet. Every record stays on its flat stake.")
-        print("Copy ledger.example.csv to ledger.csv and replace the examples with graded bets.")
-    for status in qualification_report(args.ledger):
+        print("Copy ledger.example.csv to ledger.csv and replace the examples with bets you place.")
+    for status in qualification_report(ledger):
         mean = "n/a" if status.mean_clv is None else f"{status.mean_clv:.3f}"
         print(f"  {status.record}: graded {status.graded}, average CLV {mean}, qualified {status.qualified}")
         print(f"    {status.reason}")
@@ -268,24 +353,28 @@ def _credits(remaining: str | None, last_cost: str | None) -> None:
     print(f"The Odds API credits: last request {last_cost or '?'}, remaining {remaining or '?'}.")
 
 
-def _prop_prices(key: str, max_events: int):
+def _prop_prices(key: str, max_events: int, until: datetime):
     odds = fetch_game_odds(key)
     events = []
     now = datetime.now(timezone.utc)
     for event in odds.body:
         commence = datetime.fromisoformat(str(event["commence_time"]).replace("Z", "+00:00"))
-        if commence > now:
+        if now < commence <= until:
             events.append(event["id"])
     notes = []
     if len(events) > max_events:
         notes.append(
-            f"Prop markets requested for {max_events} of {len(events)} upcoming games. "
+            f"Prop markets requested for {max_events} of {len(events)} games in this slate. "
             "Raise --max-events to include more. Each game spends Odds API credits."
         )
         events = events[:max_events]
     prices = []
     for event_id in events:
-        payload = fetch_event_props(key, event_id)
+        try:
+            payload = fetch_event_props(key, event_id)
+        except OddsApiError as exc:
+            notes.append(f"Skipped one game after the props feed failed: {exc}")
+            continue
         prices.extend(build_side_prices(parse_outcomes(payload.body)))
         _credits(payload.remaining, payload.last_cost)
     if not prices:
@@ -293,11 +382,11 @@ def _prop_prices(key: str, max_events: int):
     return prices, notes
 
 
-def _game_legs(prices, state, settings: Settings, qualified: dict[str, bool]) -> list[ParlayLeg]:
+def _game_legs(prices, state, settings: Settings, qualified: dict[str, bool], until: datetime) -> list[ParlayLeg]:
     now = datetime.now(timezone.utc)
     legs: list[ParlayLeg] = []
     for price in prices:
-        if price.market not in {"h2h", "spreads", "totals"} or price.commence <= now:
+        if price.market not in {"h2h", "spreads", "totals"} or not (now < price.commence <= until):
             continue
         home = franchise_from_name(price.home)
         away = franchise_from_name(price.away)
@@ -306,7 +395,8 @@ def _game_legs(prices, state, settings: Settings, qualified: dict[str, bool]) ->
         forecast = forecast_matchup(state, home, away)
         if forecast is None:
             continue
-        both = _both_agree(price, forecast, settings, qualified)
+        decided = pregame_board([price], state, settings, qualified, now=now, until=until)
+        both = bool(decided) and signals_agree(decided[0])
         game = f"{price.away} at {price.home}"
         if price.market == "spreads" and price.point is not None:
             betting_home = price.side_name == price.home
@@ -350,12 +440,12 @@ def _game_legs(prices, state, settings: Settings, qualified: dict[str, bool]) ->
     return legs
 
 
-def _prop_legs(prices, props, settings: Settings, qualified: dict[str, bool]) -> list[ParlayLeg]:
+def _prop_legs(prices, props, settings: Settings, qualified: dict[str, bool], until: datetime) -> list[ParlayLeg]:
     now = datetime.now(timezone.utc)
     legs: list[ParlayLeg] = []
     for price in prices:
         stat = STAT_FOR_MARKET.get(price.market)
-        if stat is None or price.commence <= now or not price.description or price.point is None and stat != "anytime_td":
+        if stat is None or not (now < price.commence <= until) or not price.description or price.point is None and stat != "anytime_td":
             continue
         home = franchise_from_name(price.home)
         away = franchise_from_name(price.away)
@@ -381,8 +471,8 @@ def _prop_legs(prices, props, settings: Settings, qualified: dict[str, bool]) ->
                 continue
             p_win, _push, _loss = total_outcomes(mean, sigma, price.point, side)
             mu = mean
-        rows = prop_board([price], props, settings, qualified)
-        both = bool(rows) and rows[0].model_plus and rows[0].market_plus
+        rows = prop_board([price], props, settings, qualified, now=now, until=until)
+        both = bool(rows) and signals_agree(rows[0])
         rho_total = DEFAULT_PROP_RHO[stat]["total"]
         rho_team = DEFAULT_PROP_RHO[stat]["team_margin"]
         point = "" if price.point is None else f" {price.point:g}"
@@ -404,39 +494,3 @@ def _prop_legs(prices, props, settings: Settings, qualified: dict[str, bool]) ->
             )
         )
     return legs
-
-
-def _both_agree(price, forecast, settings: Settings, qualified: dict[str, bool]) -> bool:
-    if price.market == "spreads" and price.point is not None:
-        betting_home = price.side_name == price.home
-        home_point = price.point if betting_home else -price.point
-        home_win, push, home_loss = spread_outcomes(forecast.mu_margin, forecast.sigma_margin, home_point)
-        p_win = home_win if betting_home else home_loss
-        record = "sides"
-    elif price.market == "totals" and price.point is not None and price.side_name.lower() in {"over", "under"}:
-        p_win, push, _loss = total_outcomes(
-            forecast.mu_total, forecast.sigma_total, price.point, price.side_name.lower()
-        )
-        record = "totals"
-    elif price.market == "h2h":
-        home_win, push, away_win = moneyline_outcomes(forecast.mu_margin, forecast.sigma_margin)
-        p_win = home_win if price.side_name == price.home else away_win
-        record = "sides"
-    else:
-        return False
-    row = decide(
-        game="",
-        market=price.market,
-        side=price.side_name,
-        record=record,
-        dk_american=price.dk_american,
-        dk_novig=price.dk_novig,
-        p_win=p_win,
-        p_push=push,
-        market_probability=price.market_novig,
-        market_source=price.market_source,
-        note="",
-        settings=settings,
-        qualified=qualified.get(record, False),
-    )
-    return row.model_plus and row.market_plus

@@ -51,6 +51,9 @@ DEFAULT_SLEEVE_PARLAYS = 0.05
 DEFAULT_MIN_EDGE = 0.02
 DEFAULT_MIN_EV = 0.0
 DEFAULT_MAX_STAKE_FRACTION = 0.05
+# Stop suggesting stakes after settled losses reach this share of the bankroll.
+# On $100 that is $25. The model does not raise stakes to chase a profit target.
+DEFAULT_LOSS_LIMIT_FRACTION = 0.25
 SIMULATION_BANKROLL = 1000.0
 
 FAMILIES = ("sides", "props", "live", "parlays")
@@ -71,6 +74,7 @@ class Settings:
     sleeve_props: float = DEFAULT_SLEEVE_PROPS
     sleeve_live: float = DEFAULT_SLEEVE_LIVE
     sleeve_parlays: float = DEFAULT_SLEEVE_PARLAYS
+    loss_limit_fraction: float = DEFAULT_LOSS_LIMIT_FRACTION
 
     def __post_init__(self) -> None:
         if self.bankroll is not None and self.bankroll <= 0:
@@ -94,6 +98,8 @@ class Settings:
             )
         if min(self.sleeve_sides, self.sleeve_props, self.sleeve_live, self.sleeve_parlays) < 0:
             raise SettingsError("Sleeve fractions cannot be negative")
+        if not 0 < self.loss_limit_fraction <= 1:
+            raise SettingsError("--loss-limit-fraction must be between 0 and 1 (25% is 0.25)")
 
     def pool(self, family: str) -> float:
         """Dollars this family is allowed to draw from."""
@@ -134,6 +140,7 @@ class Settings:
                 f"  bankroll: {bank}",
                 f"  edge threshold: {self.min_edge:.1%}   minimum EV: {self.min_ev:.1%} (settings, not a fixed cutoff)",
                 f"  stake cap: {self.max_stake_fraction:.1%} of the sleeve the bet draws from",
+                f"  season stop: no new stakes after settled losses reach {self.loss_limit_fraction:.0%} of the bankroll",
                 "Spreads and moneylines share a closing-line record. Totals keep their own. Props keep their own.",
                 "Live stays flat. Other straight staking methods: --staking flat|units|full|half|quarter.",
             ]
@@ -213,6 +220,7 @@ def load_settings(
     sleeve_props: float | None = None,
     sleeve_live: float | None = None,
     sleeve_parlays: float | None = None,
+    loss_limit_fraction: float | None = None,
     bankroll_fallback: float | None = None,
 ) -> Settings:
     """CLI values win, then environment variables, then the locked defaults."""
@@ -260,5 +268,10 @@ def load_settings(
             _env_float("NFL_SLEEVE_PARLAYS")
             if _env_float("NFL_SLEEVE_PARLAYS") is not None
             else DEFAULT_SLEEVE_PARLAYS
+        ),
+        loss_limit_fraction=loss_limit_fraction if loss_limit_fraction is not None else (
+            _env_float("NFL_LOSS_LIMIT_FRACTION")
+            if _env_float("NFL_LOSS_LIMIT_FRACTION") is not None
+            else DEFAULT_LOSS_LIMIT_FRACTION
         ),
     )

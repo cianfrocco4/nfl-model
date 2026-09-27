@@ -1,6 +1,8 @@
 """Core prices, staking, qualification, and parlay joints."""
 
 import math
+from datetime import datetime, timezone
+from pathlib import Path
 
 from nfl_model.odds_math import (
     american_to_decimal,
@@ -20,8 +22,17 @@ from nfl_model.parlay import (
     price_ticket,
 )
 from nfl_model.probabilities import moneyline_outcomes, spread_outcomes
-from nfl_model.qualification import closing_line_value, grade_record
-from nfl_model.recommend import decide
+from nfl_model.data_nflverse import project_root
+from nfl_model.qualification import (
+    LedgerError,
+    SeasonMoney,
+    bet_profit,
+    closing_line_value,
+    grade_record,
+    qualification_report,
+    season_money,
+)
+from nfl_model.recommend import apply_season_loss_limit, decide, render, slate_end
 from nfl_model.settings import Settings, StakingMethod
 from nfl_model.staking import kelly_fraction, method_for_policy, stake_dollars
 
@@ -162,6 +173,122 @@ def test_opposite_totals_cannot_both_win():
         event_id="g", label="under", both_agree=True, mu_total=45, sigma_total=10, line=45.5, side="under",
     )
     assert joint_probability([over, under], rho_margin_total=0.0) == 0
+
+
+def test_saturday_slate_ends_tuesday_noon_eastern():
+    saturday_evening = datetime(2026, 9, 26, 23, 0, tzinfo=timezone.utc)
+    assert slate_end(saturday_evening) == datetime(2026, 9, 29, 16, 0, tzinfo=timezone.utc)
+
+
+def test_blank_closing_number_is_reported_and_not_graded(tmp_path: Path):
+    ledger = tmp_path / "ledger.csv"
+    ledger.write_text(
+        "record,bet_number,close_number,direction,note\n"
+        "sides,-3.5,,spread,waiting\n"
+        "sides,-3.5,-6.5,spread,graded\n"
+    )
+    status = next(row for row in qualification_report(ledger) if row.record == "sides")
+    assert status.graded == 1
+    assert status.ungraded == 1
+    assert status.qualified is False
+    assert "do not count" in status.reason
+
+
+def test_default_render_is_the_stake_list():
+    settings = Settings(bankroll=1000, min_edge=0.02, min_ev=0.0)
+    stake = decide(
+        game="A at B", market="spreads", side="Home -3.5", record="sides",
+        dk_american=-110, dk_novig=0.5, p_win=0.58, p_push=0.0,
+        market_probability=0.56, market_source="pinnacle", note="",
+        settings=settings, qualified=False,
+        kickoff=datetime(2026, 9, 27, 17, 0, tzinfo=timezone.utc),
+    )
+    passed = decide(
+        game="C at D", market="totals", side="Over 44.5", record="totals",
+        dk_american=-110, dk_novig=0.5, p_win=0.5, p_push=0.0,
+        market_probability=0.5, market_source="pinnacle", note="",
+        settings=settings, qualified=False,
+    )
+    text = render([stake, passed], "Pregame board")
+    assert "Suggested stakes" in text
+    assert "Home -3.5" in text
+    assert "ET" in text
+    assert "Every signal" not in text
+    assert "1 other side is a lean or a pass" in text
+    assert "Every signal" in render([stake, passed], "Pregame board", verbose=True)
+
+
+def test_project_root_is_the_checkout_that_holds_the_ledger_example():
+    root = project_root()
+    assert (root / "ledger.example.csv").is_file()
+    assert (root / "pyproject.toml").is_file()
+
+
+def test_settled_profit_uses_stake_and_result(tmp_path: Path):
+    assert bet_profit(0.65, -110, "loss") == -0.65
+    assert bet_profit(0.65, 150, "win") == 0.65 * 1.5
+    assert bet_profit(0.20, None, "push") == 0
+    ledger = tmp_path / "ledger.csv"
+    ledger.write_text(
+        "record,bet_number,close_number,direction,note,stake,american,result\n"
+        "sides,-3.5,-4.5,spread,lost,0.65,-110,loss\n"
+        "sides,-3.5,,spread,open,0.65,-110,\n"
+        "totals,47.5,49,over,won,0.65,150,win\n"
+        "props,64.5,60,over,push,0.20,-110,push\n"
+    )
+    money = season_money(ledger)
+    assert money.tracks_money is True
+    assert money.settled == 3
+    assert money.unsettled == 1
+    assert (money.wins, money.losses, money.pushes) == (1, 1, 1)
+    assert math.isclose(money.profit, -0.65 + 0.65 * 1.5)
+    status = next(row for row in qualification_report(ledger) if row.record == "sides")
+    assert status.graded == 1
+    assert status.ungraded == 1
+
+
+def test_old_ledger_without_money_columns_is_not_a_profit(tmp_path: Path):
+    ledger = tmp_path / "ledger.csv"
+    ledger.write_text(
+        "record,bet_number,close_number,direction,note\n"
+        "sides,-3.5,-6.5,spread,graded\n"
+    )
+    money = season_money(ledger)
+    assert money.tracks_money is False
+    assert money.profit == 0
+    assert money.settled == 0
+
+
+def test_a_win_without_odds_is_rejected(tmp_path: Path):
+    ledger = tmp_path / "ledger.csv"
+    ledger.write_text(
+        "record,bet_number,close_number,direction,note,stake,american,result\n"
+        "sides,-3.5,-6.5,spread,missing price,0.65,,win\n"
+    )
+    try:
+        season_money(ledger)
+    except LedgerError as exc:
+        assert "american" in str(exc)
+    else:
+        raise AssertionError("expected a ledger error")
+
+
+def test_season_loss_limit_zeros_a_stake():
+    settings = Settings(bankroll=100)
+    both = decide(
+        game="A at B", market="spreads", side="Home -3.5", record="sides",
+        dk_american=-110, dk_novig=0.5, p_win=0.58, p_push=0.0,
+        market_probability=0.56, market_source="pinnacle", note="",
+        settings=settings, qualified=False,
+    )
+    assert both.stake == round(100 * 0.65 * 0.01, 2)
+    stopped_money = SeasonMoney(1, 0, -25.0, 0, 1, 0, True)
+    stopped = apply_season_loss_limit([both], settings, stopped_money)
+    assert stopped[0].stake == 0
+    assert "Season stop" in stopped[0].reason
+    still_open = SeasonMoney(1, 0, -24.0, 0, 1, 0, True)
+    kept = apply_season_loss_limit([both], settings, still_open)
+    assert kept[0].stake == both.stake
 
 
 def test_one_leg_is_not_a_parlay():

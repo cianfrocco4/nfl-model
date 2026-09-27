@@ -7,21 +7,53 @@ If only one is +EV, the row is a lean and the stake is $0.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import datetime, timezone
+from dataclasses import dataclass, replace
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 from nfl_model.live_model import elapsed_fraction, rescale
 from nfl_model.odds_api import ScoreState, SidePrice
 from nfl_model.odds_math import american_to_decimal, edge, expected_value, fair_american, format_american
 from nfl_model.probabilities import moneyline_outcomes, spread_outcomes, total_outcomes
 from nfl_model.props_model import MARKET_FOR_STAT, PlayerProjection, PropState, normalize_name, project_stat
-from nfl_model.qualification import pool_name
+from nfl_model.qualification import SeasonMoney, pool_name, season_stop_note
 from nfl_model.settings import FairPriceSource, Settings
 from nfl_model.staking import fit_stakes_to_cash, method_for_policy, stake_dollars
 from nfl_model.team_model import ModelState, ScoreForecast, forecast_matchup
 from nfl_model.teams import franchise_from_name
 
 STAT_FOR_MARKET = {market: stat for stat, market in MARKET_FOR_STAT.items()}
+EASTERN = ZoneInfo("America/New_York")
+
+
+def slate_end(now: datetime, days: float | None = None) -> datetime:
+    """End of the board window.
+
+    With no --days, that is the next Tuesday noon Eastern that is at least
+    36 hours away. Saturday night then includes Sunday and Monday, and stops
+    before the following Thursday.
+    """
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    if days is not None:
+        if days <= 0:
+            raise ValueError("--days must be greater than 0")
+        return now + timedelta(days=days)
+    local = now.astimezone(EASTERN)
+    candidate = local.replace(hour=12, minute=0, second=0, microsecond=0)
+    days_ahead = (1 - candidate.weekday()) % 7
+    candidate = candidate + timedelta(days=days_ahead)
+    if candidate <= local:
+        candidate += timedelta(days=7)
+    if candidate - local < timedelta(hours=36):
+        candidate += timedelta(days=7)
+    return candidate.astimezone(timezone.utc)
+
+
+def _in_slate(commence: datetime, clock: datetime, until: datetime | None) -> bool:
+    if commence <= clock:
+        return False
+    return until is None or commence <= until
 
 
 @dataclass
@@ -45,6 +77,7 @@ class Decision:
     reason: str
     note: str
     fair_american: int | None
+    kickoff: datetime | None = None
 
 
 def _signal(p_win: float, p_push: float, decimal_odds: float, novig: float, settings: Settings) -> tuple[float, float, bool]:
@@ -70,6 +103,7 @@ def decide(
     note: str,
     settings: Settings,
     qualified: bool,
+    kickoff: datetime | None = None,
 ) -> Decision:
     decimal_odds = american_to_decimal(dk_american)
     p_loss = 1.0 - p_win - p_push
@@ -158,6 +192,7 @@ def decide(
         reason=reason,
         note=note,
         fair_american=quoted,
+        kickoff=kickoff,
     )
 
 
@@ -196,17 +231,39 @@ def apply_cash_limit(rows: list[Decision], settings: Settings) -> list[Decision]
                 reason=reason,
                 note=row.note,
                 fair_american=row.fair_american,
+                kickoff=row.kickoff,
             )
     return updated
 
 
-def pregame_board(prices: list[SidePrice], state: ModelState, settings: Settings, qualified: dict[str, bool], now: datetime | None = None) -> list[Decision]:
+def apply_season_loss_limit(rows: list[Decision], settings: Settings, money: SeasonMoney) -> list[Decision]:
+    """Drop every suggested stake once settled losses reach the season stop."""
+    note = season_stop_note(money, settings.bankroll, settings.loss_limit_fraction)
+    if note is None:
+        return rows
+    stopped: list[Decision] = []
+    for row in rows:
+        if row.stake <= 0:
+            stopped.append(row)
+            continue
+        stopped.append(replace(row, stake=0.0, status="pass", reason=f"{row.reason} {note}"))
+    return stopped
+
+
+def pregame_board(
+    prices: list[SidePrice],
+    state: ModelState,
+    settings: Settings,
+    qualified: dict[str, bool],
+    now: datetime | None = None,
+    until: datetime | None = None,
+) -> list[Decision]:
     clock = now or datetime.now(timezone.utc)
     rows: list[Decision] = []
     for price in prices:
         if price.market not in {"h2h", "spreads", "totals"}:
             continue
-        if price.commence <= clock:
+        if not _in_slate(price.commence, clock, until):
             continue
         forecast = _forecast_for_price(price, state)
         if forecast is None:
@@ -230,6 +287,7 @@ def pregame_board(prices: list[SidePrice], state: ModelState, settings: Settings
                 note=price.note,
                 settings=settings,
                 qualified=qualified.get(record, False),
+                kickoff=price.commence,
             )
         )
     return apply_cash_limit(rows, settings)
@@ -293,6 +351,7 @@ def live_board(
                 note=note,
                 settings=settings,
                 qualified=False,
+                kickoff=price.commence,
             )
         )
     if not seen_live:
@@ -300,12 +359,19 @@ def live_board(
     return apply_cash_limit(rows, settings), notes
 
 
-def prop_board(prices: list[SidePrice], props: PropState, settings: Settings, qualified: dict[str, bool], now: datetime | None = None) -> list[Decision]:
+def prop_board(
+    prices: list[SidePrice],
+    props: PropState,
+    settings: Settings,
+    qualified: dict[str, bool],
+    now: datetime | None = None,
+    until: datetime | None = None,
+) -> list[Decision]:
     clock = now or datetime.now(timezone.utc)
     rows: list[Decision] = []
     for price in prices:
         stat = STAT_FOR_MARKET.get(price.market)
-        if stat is None or price.commence <= clock or not price.description:
+        if stat is None or not _in_slate(price.commence, clock, until) or not price.description:
             continue
         home = franchise_from_name(price.home)
         away = franchise_from_name(price.away)
@@ -340,12 +406,25 @@ def prop_board(prices: list[SidePrice], props: PropState, settings: Settings, qu
                 note=price.note,
                 settings=settings,
                 qualified=qualified.get("props", False),
+                kickoff=price.commence,
             )
         )
     return apply_cash_limit(rows, settings)
 
 
-def render(rows: list[Decision], heading: str) -> str:
+def signals_agree(row: Decision) -> bool:
+    """The same both-agree check the straight board uses for a stake."""
+    return row.model_plus and row.market_plus
+
+
+def _kickoff(row: Decision) -> str:
+    if row.kickoff is None:
+        return ""
+    local = row.kickoff.astimezone(EASTERN)
+    return "  " + local.strftime("%a %b %d %I:%M %p ET")
+
+
+def render(rows: list[Decision], heading: str, *, verbose: bool = False) -> str:
     stakes = [row for row in rows if row.stake > 0]
     leans = [row for row in rows if row.status == "lean"]
     lines = [heading, ""]
@@ -353,15 +432,25 @@ def render(rows: list[Decision], heading: str) -> str:
         lines.append("Suggested stakes (you place these yourself):")
         for row in stakes:
             lines.append(
-                f"  ${row.stake:,.2f}  {row.game}  {row.side}  DK {format_american(row.dk_american)}  {row.reason}"
+                f"  ${row.stake:,.2f}  {row.game}  {row.side}{_kickoff(row)}  "
+                f"DK {format_american(row.dk_american)}  {row.reason}"
             )
     else:
         lines.append("Suggested stakes: none.")
+    hidden = len(rows) - len(stakes)
+    if not verbose:
+        if hidden == 1:
+            lines.append("1 other side is a lean or a pass. Pass --verbose to list it.")
+        elif hidden:
+            lines.append(f"{hidden} other sides are leans or passes. Pass --verbose to list them.")
+        return "\n".join(lines)
     lines.append("")
     if leans:
         lines.append("Leans with no stake:")
         for row in leans:
-            lines.append(f"  {row.game}  {row.side}  DK {format_american(row.dk_american)}  {row.reason}")
+            lines.append(
+                f"  {row.game}  {row.side}{_kickoff(row)}  DK {format_american(row.dk_american)}  {row.reason}"
+            )
         lines.append("")
     lines.append("Every signal:")
     if not rows:

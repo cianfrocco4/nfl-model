@@ -20,12 +20,31 @@ PLAYER_WEEK_URL = (
 PLAYED_GAME_TYPES = {"REG", "WC", "DIV", "CON", "SB"}
 PLAYER_SEASONS = range(2015, 2027)
 
-CACHE_DIR = Path(__file__).resolve().parents[2] / ".cache"
+def project_root() -> Path:
+    """Directory that holds this checkout.
+
+    The current working directory wins, so a normal install still reads
+    `.cache` and `ledger.csv` from the folder you launched in. The source
+    tree is the fallback when the package file itself sits in that checkout.
+    """
+
+    def marked(path: Path) -> bool:
+        return (path / "pyproject.toml").is_file() and (path / "ledger.example.csv").is_file()
+
+    cwd = Path.cwd()
+    for candidate in [cwd, *cwd.parents]:
+        if marked(candidate):
+            return candidate
+    for candidate in Path(__file__).resolve().parents:
+        if marked(candidate):
+            return candidate
+    return cwd
 
 
 def cache_dir() -> Path:
-    CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    return CACHE_DIR
+    path = project_root() / ".cache"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
 
 
 def _download(url: str, dest: Path) -> None:
