@@ -13,6 +13,17 @@ from pathlib import Path
 
 from nfl_model.backtest import run_backtest
 from nfl_model.data_nflverse import completed_games, load_games, load_player_weeks, project_root
+from nfl_model.ledger_log import (
+    append_accepted,
+    load_offers,
+    log_result_text,
+    offers_from_decisions,
+    offers_from_tickets,
+    offers_path,
+    parse_accept,
+    parse_price,
+    save_offers,
+)
 from nfl_model.odds_api import (
     MissingApiKeyError,
     OddsApiError,
@@ -48,7 +59,6 @@ from nfl_model.qualification import (
     standing_goal_line,
 )
 from nfl_model.recommend import (
-    EASTERN,
     EASTERN,
     apply_season_loss_limit,
     live_board,
@@ -162,6 +172,21 @@ def _parser() -> argparse.ArgumentParser:
         help="Show quarter-Kelly qualification, the season stop, and any profit goal.",
     )
     qualification.set_defaults(func=_qualification)
+
+    log = sub.add_parser(
+        "log",
+        parents=[common],
+        help="Append accepted stakes to the ledger. No API key.",
+    )
+    log.add_argument("source", choices=["board", "props", "live", "parlays"])
+    log.add_argument("--accept", required=True, help="Stake numbers to log, for example 1,3.")
+    log.add_argument(
+        "--price",
+        action="append",
+        default=[],
+        help="DraftKings American price if it moved, for example 1:-108.",
+    )
+    log.set_defaults(func=_log)
     return parser
 
 
@@ -264,7 +289,9 @@ def _board(args) -> int:
         settings,
         _money(args),
     )
-    print(render(rows, "Pregame board", verbose=args.verbose))
+    board_offers = offers_from_decisions(rows)
+    _publish("board", board_offers)
+    print(render(rows, "Pregame board", verbose=args.verbose, log_source="board" if board_offers else None))
     print(f"\nSame-game margin/total correlation from history: {rho:+.2f}")
     return 0
 
@@ -283,7 +310,9 @@ def _props(args) -> int:
         settings,
         _money(args),
     )
-    print(render(rows, "Pregame props", verbose=args.verbose))
+    prop_offers = offers_from_decisions(rows)
+    _publish("props", prop_offers)
+    print(render(rows, "Pregame props", verbose=args.verbose, log_source="props" if prop_offers else None))
     return 0
 
 
@@ -305,7 +334,9 @@ def _live(args) -> int:
     rows = apply_season_loss_limit(rows, settings, _money(args))
     for note in notes:
         print(note)
-    print(render(rows, "Live board", verbose=args.verbose))
+    live_offers = offers_from_decisions(rows)
+    _publish("live", live_offers)
+    print(render(rows, "Live board", verbose=args.verbose, log_source="live" if live_offers else None))
     print(
         "\nLive prices use the current score and a blend of wall-clock time and scoring pace. "
         "They do not know possession, down, or the official clock. Live props are not staked."
@@ -348,9 +379,29 @@ def _parlays(args) -> int:
             for ticket, stake in zip(priced, stakes)
         ]
     priced = _stop_tickets(priced, settings, _money(args))
-    print(render_parlays(legs, suggestions, priced, verbose=args.verbose))
+    offers = offers_from_tickets(priced)
+    _publish("parlays", offers)
+    print(render_parlays(legs, suggestions, priced, verbose=args.verbose, log_source="parlays" if offers else None))
     print(f"\nMargin/total correlation used for same-game tickets: {rho:+.2f}")
     print(f"History rows behind that correlation: {len(predictions)}")
+    return 0
+
+
+def _publish(source: str, offers: list) -> None:
+    save_offers(offers_path(source), offers)
+
+
+def _log(args) -> int:
+    offers = load_offers(offers_path(args.source))
+    accept = parse_accept(args.accept)
+    prices: dict[int, int] = {}
+    for raw in args.price:
+        number, american = parse_price(raw)
+        if number in prices:
+            raise ValueError(f"Stake {number} has more than one --price.")
+        prices[number] = american
+    result = append_accepted(_ledger(args), offers, accept, prices)
+    print(log_result_text(result))
     return 0
 
 
@@ -379,7 +430,8 @@ def _qualification(args) -> int:
     print(_progress(settings, ledger))
     if not ledger.exists():
         print("No ledger file yet. Every record stays on its flat stake.")
-        print("Copy ledger.example.csv to ledger.csv and replace the examples with bets you place.")
+        print("Place a numbered stake, then: python -m nfl_model log board --accept 1")
+        print("ledger.example.csv shows the columns. Close and result stay blank until you know them.")
     else:
         print(ledger_status_text(ledger))
     for status in qualification_report(ledger):

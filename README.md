@@ -39,6 +39,8 @@ python -m nfl_model props --bankroll 1000
 python -m nfl_model live --bankroll 1000
 python -m nfl_model parlays --bankroll 1000
 python -m nfl_model parlays --bankroll 1000 --slip 1,2:+265
+python -m nfl_model log board --accept 1,3
+python -m nfl_model log board --accept 1 --price 1:-108
 ```
 
 The default print is the stake list for the current NFL week, through Tuesday noon Eastern. `--days 7` widens that window. `--verbose` adds the leans, the passes, and every priced side. `board`, `props`, `live`, and `parlays` exit with setup instructions when `THE_ODDS_API_KEY` is missing.
@@ -56,7 +58,7 @@ flowchart TD
   read --> stake{Dollar stake?}
   stake -->|Lean or pass| skip[Do not bet that side]
   stake -->|Yes| place[Place that amount at DraftKings]
-  place --> log[Write ledger.csv the same day]
+  place --> log["log --accept the numbers you placed"]
   log --> extra{Anything else?}
   extra -->|Parlay| slip[parlays, then --slip with the DraftKings price]
   extra -->|Game in play| live[live. No live props]
@@ -68,6 +70,16 @@ flowchart TD
 ```
 
 Leave `close_number` and `result` blank until you know them. A row you never write is invisible to the loss stop.
+
+`board`, `props`, `live`, and `parlays` number each suggested stake and save that list. Log before you run the same command again, because the next run replaces the list. Only the numbers you accept are written. A lean is not written.
+
+```bash
+python -m nfl_model log board --accept 1,3
+python -m nfl_model log props --accept 2
+python -m nfl_model log parlays --accept 1 --price 1:+265
+```
+
+`--price` is the American price on the DraftKings ticket when it moved. On a moneyline, an anytime touchdown, or a parlay, that price also sets the decimal bet number. On a spread, total, or yard prop, the line stays the number that was suggested. Logging the same open row again does not add a second row. This does not log into DraftKings.
 
 ## How to read a straight bet
 

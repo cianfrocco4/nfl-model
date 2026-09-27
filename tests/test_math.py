@@ -12,7 +12,15 @@ from nfl_model.odds_math import (
     implied_probability,
     remove_vig,
 )
+from nfl_model.ledger_log import (
+    LedgerLogError,
+    StakeOffer,
+    append_accepted,
+    offers_from_decisions,
+    offers_from_tickets,
+)
 from nfl_model.parlay import (
+    ParlayTicket,
     bivariate_cdf,
     game_leg_from_moneyline,
     game_leg_from_spread,
@@ -20,12 +28,14 @@ from nfl_model.parlay import (
     independent_probability,
     joint_probability,
     price_ticket,
+    render_parlays,
 )
 from nfl_model.probabilities import moneyline_outcomes, spread_outcomes
 from nfl_model.data_nflverse import project_root
 from nfl_model.qualification import (
     LedgerError,
     SeasonMoney,
+    bet_identity,
     bet_profit,
     closing_line_value,
     grade_record,
@@ -214,6 +224,9 @@ def test_default_render_is_the_stake_list():
     )
     text = render([stake, passed], "Pregame board")
     assert "Suggested stakes" in text
+    assert "log board" not in text
+    logged = render([stake, passed], "Pregame board", log_source="board")
+    assert "python -m nfl_model log board --accept 1" in logged
     assert "Home -3.5" in text
     assert "ET" in text
     assert "Every signal" not in text
@@ -358,6 +371,120 @@ def test_profit_goal_requires_return_weeks_and_start():
         assert "0.20" in str(exc)
     else:
         raise AssertionError("expected a settings error")
+
+
+def test_bet_identity_uses_the_line_or_the_decimal_price():
+    assert bet_identity("spreads", "Buffalo Bills", -3.5, -110) == (-3.5, "spread")
+    assert bet_identity("totals", "Over", 47.5, -110) == (47.5, "over")
+    assert bet_identity("player_pass_yds", "Under", 245.5, -115) == (245.5, "under")
+    number, direction = bet_identity("h2h", "Buffalo Bills", None, -110)
+    assert direction == "decimal"
+    assert number == round(american_to_decimal(-110), 4)
+    td_number, td_direction = bet_identity("player_anytime_td", "Yes", None, 150)
+    assert (td_number, td_direction) == (2.5, "decimal")
+    try:
+        bet_identity("spreads", "Buffalo Bills", None, -110)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("expected a spread without a point to fail")
+
+
+def test_accepted_stakes_fill_the_ledger_and_skip_open_duplicates(tmp_path: Path):
+    settings = Settings(bankroll=1000, min_edge=0.02, min_ev=0.0)
+    spread = decide(
+        game="Chiefs at Bills", market="spreads", side="Bills -3.5", record="sides",
+        dk_american=-110, dk_novig=0.5, p_win=0.58, p_push=0.0,
+        market_probability=0.56, market_source="pinnacle", note="comparison",
+        settings=settings, qualified=False, bet_number=-3.5, direction="spread",
+    )
+    total = decide(
+        game="Chiefs at Bills", market="totals", side="Over 47.5", record="totals",
+        dk_american=-105, dk_novig=0.5, p_win=0.58, p_push=0.0,
+        market_probability=0.56, market_source="pinnacle", note="",
+        settings=settings, qualified=False, bet_number=47.5, direction="over",
+    )
+    moneyline = decide(
+        game="Chiefs at Bills", market="h2h", side="Bills", record="sides",
+        dk_american=-150, dk_novig=0.6, p_win=0.7, p_push=0.0,
+        market_probability=0.65, market_source="pinnacle", note="",
+        settings=settings, qualified=False,
+        bet_number=round(american_to_decimal(-150), 4), direction="decimal",
+    )
+    offers = offers_from_decisions([spread, total, moneyline])
+    assert [offer.number for offer in offers] == [1, 2, 3]
+    assert offers[0].note == "Chiefs at Bills Bills -3.5"
+    assert "comparison" not in offers[0].note
+    ledger = tmp_path / "ledger.csv"
+    written = append_accepted(ledger, offers, [1, 3], {1: -108})
+    text = ledger.read_text()
+    assert text.splitlines()[0] == "record,bet_number,close_number,direction,note,stake,american,result"
+    assert "sides,-3.5,,spread,Chiefs at Bills Bills -3.5," in text
+    assert ",-108," in text
+    assert "totals" not in text
+    assert f"{round(american_to_decimal(-150), 4)},,decimal" in text
+    assert written.written[0].american == -108
+    assert written.written[0].bet_number == -3.5
+    money = season_money(ledger)
+    assert money.unsettled == 2
+    assert money.settled == 0
+    status = next(row for row in qualification_report(ledger) if row.record == "sides")
+    assert status.graded == 0
+    assert status.ungraded == 2
+
+    again = append_accepted(ledger, offers, [1], {1: -120})
+    assert again.written == ()
+    assert len(again.skipped) == 1
+    assert again.skipped[0].ledger_american == -108
+    assert ledger.read_text().count("sides,-3.5,") == 1
+
+    moved = append_accepted(ledger, offers, [3], {3: 150})
+    assert moved.written[0].direction == "decimal"
+    assert moved.written[0].bet_number == 2.5
+    assert moved.written[0].american == 150
+    assert ledger.read_text().count("decimal") == 2
+
+
+def test_unknown_stake_number_writes_nothing(tmp_path: Path):
+    ledger = tmp_path / "ledger.csv"
+    offer = StakeOffer(1, "props", 64.5, "over", "Player Over 64.5", 2.0, -115)
+    try:
+        append_accepted(ledger, [offer], [4], {})
+    except LedgerLogError as exc:
+        assert "4" in str(exc)
+    else:
+        raise AssertionError("expected an unknown stake number")
+    assert not ledger.exists()
+
+
+def test_priced_parlay_slips_are_numbered_for_the_log():
+    first = game_leg_from_moneyline(
+        event_id="a", label="A ML", both_agree=True, mu_margin=1, sigma_margin=13, betting_home=True,
+    )
+    second = game_leg_from_moneyline(
+        event_id="b", label="B ML", both_agree=True, mu_margin=-1, sigma_margin=13, betting_home=False,
+    )
+    ticket = ParlayTicket(
+        legs=(first, second),
+        kind="cross-game",
+        joint=0.3,
+        independent=0.3,
+        dk_american=-110,
+        edge=0.04,
+        ev=0.02,
+        status="stake",
+        stake=0.5,
+        reason="stake: the DraftKings parlay price is +EV",
+    )
+    offers = offers_from_tickets([ticket])
+    assert len(offers) == 1
+    assert offers[0].record == "parlays"
+    assert offers[0].direction == "decimal"
+    assert offers[0].bet_number == round(american_to_decimal(-110), 4)
+    assert offers[0].note == "A ML + B ML"
+    text = render_parlays([first, second], [], [ticket], log_source="parlays")
+    assert "1  $0.50" in text
+    assert "python -m nfl_model log parlays --accept 1" in text
 
 
 def test_one_leg_is_not_a_parlay():

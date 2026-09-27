@@ -420,6 +420,7 @@ def render_parlays(
     priced: list[ParlayTicket],
     *,
     verbose: bool = False,
+    log_source: str | None = None,
 ) -> str:
     lines = [
         "Parlays are 2 or 3 legs. Same-game tickets are correlation-adjusted. Cross-game tickets multiply.",
@@ -457,12 +458,23 @@ def render_parlays(
     if priced:
         lines.append("")
         lines.append("Slips you priced from DraftKings:")
+        log_number = 0
         for ticket in priced:
             price = "n/a" if ticket.dk_american is None else format_american(ticket.dk_american)
+            marker = ""
+            if ticket.stake > 0 and ticket.dk_american is not None:
+                log_number += 1
+                marker = f"{log_number}  "
             lines.append(
-                f"  ${ticket.stake:,.2f}  DK {price}  fair {ticket.fair_price}  "
+                f"  {marker}${ticket.stake:,.2f}  DK {price}  fair {ticket.fair_price}  "
                 f"joint {ticket.joint:.1%}  {ticket.reason}"
             )
+        if log_source and log_number:
+            lines.append(
+                "Log the ones you place before you run this again: "
+                f"python -m nfl_model log {log_source} --accept 1"
+            )
+            lines.append("If DraftKings moved the price: --price 1:-108")
     return "\n".join(lines)
 
 

@@ -14,7 +14,7 @@
   </style>
   <rect width="1280" height="760" fill="#f6f3ee"/>
   <text class="title" x="48" y="52">What you do</text>
-  <text class="sub" x="48" y="78">The tool suggests a stake. You place the bet at DraftKings. You write the row down.</text>
+  <text class="sub" x="48" y="78">The tool suggests a stake. You place the bet at DraftKings. You log the numbers you accept.</text>
 
   <rect x="48" y="108" width="220" height="250" rx="14" fill="#ffffff" stroke="#e7e5e4"/>
   <text class="step" x="68" y="140">1  CHECK</text>
@@ -49,20 +49,20 @@
   <text class="p" x="634" y="222">on that side and price.</text>
   <text class="p" x="634" y="250">The tool does not log in,</text>
   <text class="p" x="634" y="270">and it does not bet.</text>
-  <text class="small" x="634" y="330">Same day, write the row.</text>
+  <text class="small" x="634" y="330">Same day, log the number.</text>
 
   <path d="M902 230 H938" stroke="#a8a29e" stroke-width="2" fill="none"/>
   <path d="M930 224 L940 230 L930 236" fill="#a8a29e"/>
 
   <rect x="942" y="108" width="290" height="250" rx="14" fill="#ffffff" stroke="#e7e5e4"/>
   <text class="step" x="962" y="140">4  LOG</text>
-  <text class="h" x="962" y="170">ledger.csv</text>
-  <text class="p" x="962" y="202">record, number, direction</text>
-  <text class="p" x="962" y="222">stake, American price</text>
-  <text class="p" x="962" y="258">Leave the close blank.</text>
-  <text class="p" x="962" y="278">Leave the result blank.</text>
-  <text class="small" x="962" y="330">A missing row is invisible</text>
-  <text class="small" x="962" y="348">to the loss stop.</text>
+  <text class="h" x="962" y="170">Accepted stakes</text>
+  <text class="p" x="962" y="202">Log the numbers you placed.</text>
+  <text class="p" x="962" y="222">Skip the ones you did not.</text>
+  <text class="cmd" x="962" y="258">log board --accept 1,3</text>
+  <text class="small" x="962" y="286">Price moved? --price 1:-108</text>
+  <text class="p" x="962" y="316">Leave the close blank.</text>
+  <text class="p" x="962" y="336">Leave the result blank.</text>
 
   <rect x="48" y="390" width="560" height="168" rx="14" fill="#ffffff" stroke="#e7e5e4"/>
   <text class="step" x="68" y="422">ALSO THAT SLATE</text>
@@ -71,7 +71,7 @@
   <text class="p" x="68" y="500">Copy the DraftKings slip price.</text>
   <text class="cmd" x="68" y="528">parlays --slip 1,2:+265</text>
   <text class="small" x="300" y="452">Stake only if it prints dollars.</text>
-  <text class="small" x="300" y="474">Then log record parlays.</text>
+  <text class="small" x="300" y="474">Then: log parlays --accept 1.</text>
   <text class="h" x="300" y="512">Live</text>
   <text class="small" x="300" y="536">While a game is on, run live. No live props.</text>
 
